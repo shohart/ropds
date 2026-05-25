@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026.05.25
+
+### Added
+- The Catalogs page now shows a persistent ".." entry at the top of each list, providing one-click navigation back to the parent folder just like a regular file browser.
+- A breadcrumb bar in the Catalogs view lets you jump back to any level of the hierarchy, with a clickable home icon for the root.
+- Each catalog entry now displays a book-count badge so it is immediately clear how many books are inside.
+
+### Changed
+- The Catalogs page surfaces books living directly at the library root instead of hiding them behind a nameless folder. The filesystem root is presented as a "Books" virtual folder; when it is the only top-level entry, its contents are shown at the root view, and when other top-level catalogs exist it is pinned to the top of the listing.
+
 ## [0.11.2] - 2026.05.12
 
 ### Fixed
