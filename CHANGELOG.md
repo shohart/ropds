@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026.05.26
+
+### Added
+- A new `opds.alphabet_first_word_only` configuration option restricts the alphabet drill-down for Books, Authors, and Series to match only the first word of each name. The default keeps the existing behaviour, which matches the typed letters at any word boundary.
+
 ## [0.11.3] - 2026.05.25
 
 ### Added
