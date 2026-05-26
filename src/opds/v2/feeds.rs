@@ -3,7 +3,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde_json::{Value, json};
 
-use crate::db::queries::{authors, books, bookshelf, catalogs, genres, series};
+use crate::db::queries::{PrefixMode, authors, books, bookshelf, catalogs, genres, series};
 use crate::state::AppState;
 
 use super::helpers::*;
@@ -270,8 +270,9 @@ pub async fn authors_feed(
     let split_items = state.config.opds.split_items as i64;
     let prefix = params.prefix.unwrap_or_default();
 
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let groups =
-        authors::get_name_prefix_groups(&state.db, params.lang_code, &prefix.to_uppercase())
+        authors::get_name_prefix_groups(&state.db, params.lang_code, &prefix.to_uppercase(), mode)
             .await
             .unwrap_or_default();
 
@@ -328,12 +329,14 @@ pub async fn authors_list(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * max_items;
 
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let author_list = authors::get_by_lang_code_prefix(
         &state.db,
         params.lang_code,
         &params.prefix.to_uppercase(),
         max_items,
         offset,
+        mode,
     )
     .await
     .unwrap_or_default();
@@ -429,8 +432,9 @@ pub async fn series_feed(
     let split_items = state.config.opds.split_items as i64;
     let prefix = params.prefix.unwrap_or_default();
 
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let groups =
-        series::get_name_prefix_groups(&state.db, params.lang_code, &prefix.to_uppercase())
+        series::get_name_prefix_groups(&state.db, params.lang_code, &prefix.to_uppercase(), mode)
             .await
             .unwrap_or_default();
 
@@ -487,12 +491,14 @@ pub async fn series_list(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * max_items;
 
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let series_list = series::get_by_lang_code_prefix(
         &state.db,
         params.lang_code,
         &params.prefix.to_uppercase(),
         max_items,
         offset,
+        mode,
     )
     .await
     .unwrap_or_default();
@@ -877,7 +883,26 @@ async fn build_search_books_feed(
                 .await
                 .unwrap_or_default()
         }
+        "b" => {
+            // "Begins with" — alphabet drill-down leaf. Use the prefix
+            // search so the configured PrefixMode applies; otherwise the
+            // first-word-only setting would silently widen back to a
+            // substring search.
+            let search_term = terms.to_uppercase();
+            let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+            books::search_by_title_prefix(
+                &state.db,
+                &search_term,
+                max_items,
+                offset,
+                hide_doubles,
+                mode,
+            )
+            .await
+            .unwrap_or_default()
+        }
         _ => {
+            // Title search: m=contains, e=exact.
             let search_term = terms.to_uppercase();
             books::search_by_title(&state.db, &search_term, max_items, offset, hide_doubles)
                 .await

@@ -2,7 +2,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-use crate::db::queries::{authors, books, catalogs, genres, series};
+use crate::db::queries::{PrefixMode, authors, books, catalogs, genres, series};
 use crate::state::AppState;
 
 use super::helpers::*;
@@ -353,9 +353,11 @@ pub async fn authors_feed(
     );
     let _ = fb.write_search_links("/opds/search/", "/opds/search/{searchTerms}/");
 
-    let groups = authors::get_name_prefix_groups(&state.db, lang_code, &prefix.to_uppercase())
-        .await
-        .unwrap_or_default();
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let groups =
+        authors::get_name_prefix_groups(&state.db, lang_code, &prefix.to_uppercase(), mode)
+            .await
+            .unwrap_or_default();
 
     for (prefix_str, count) in &groups {
         if *count >= split_items {
@@ -418,12 +420,14 @@ pub async fn authors_list(
     );
     let _ = fb.write_search_links("/opds/search/", "/opds/search/{searchTerms}/");
 
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let author_list = authors::get_by_lang_code_prefix(
         &state.db,
         lang_code,
         &prefix.to_uppercase(),
         max_items,
         offset,
+        mode,
     )
     .await
     .unwrap_or_default();
@@ -509,7 +513,8 @@ pub async fn series_feed(
     );
     let _ = fb.write_search_links("/opds/search/", "/opds/search/{searchTerms}/");
 
-    let groups = series::get_name_prefix_groups(&state.db, lang_code, &prefix.to_uppercase())
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let groups = series::get_name_prefix_groups(&state.db, lang_code, &prefix.to_uppercase(), mode)
         .await
         .unwrap_or_default();
 
@@ -574,12 +579,14 @@ pub async fn series_list(
     );
     let _ = fb.write_search_links("/opds/search/", "/opds/search/{searchTerms}/");
 
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let series_list = series::get_by_lang_code_prefix(
         &state.db,
         lang_code,
         &prefix.to_uppercase(),
         max_items,
         offset,
+        mode,
     )
     .await
     .unwrap_or_default();
@@ -819,7 +826,8 @@ pub async fn books_feed(
     );
     let _ = fb.write_search_links("/opds/search/", "/opds/search/{searchTerms}/");
 
-    let groups = books::get_title_prefix_groups(&state.db, lang_code, &prefix.to_uppercase())
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let groups = books::get_title_prefix_groups(&state.db, lang_code, &prefix.to_uppercase(), mode)
         .await
         .unwrap_or_default();
 
@@ -1040,8 +1048,26 @@ pub async fn search_books_feed(
                 .await
                 .unwrap_or_default()
         }
+        "b" => {
+            // "Begins with" — alphabet drill-down leaf. Must use the prefix
+            // search so the configured PrefixMode applies; otherwise the
+            // first-word-only setting would silently widen back to a
+            // substring search.
+            let search_term = terms.to_uppercase();
+            let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+            books::search_by_title_prefix(
+                &state.db,
+                &search_term,
+                max_items,
+                offset,
+                hide_doubles,
+                mode,
+            )
+            .await
+            .unwrap_or_default()
+        }
         _ => {
-            // Title search: m=contains, b=begins, e=exact
+            // Title search: m=contains, e=exact.
             let search_term = terms.to_uppercase();
             books::search_by_title(&state.db, &search_term, max_items, offset, hide_doubles)
                 .await

@@ -66,6 +66,34 @@ auth_required = false
     toml::from_str(&toml_str).expect("test config should parse")
 }
 
+/// Build a minimal Config with `opds.alphabet_first_word_only = true`.
+/// Used by tests that exercise the strict first-word alphabet drill-down.
+pub fn test_config_first_word_only(lib_dir: &Path, covers_dir: &Path) -> Config {
+    let toml_str = format!(
+        r#"
+[server]
+session_secret = "test-secret-key-for-integration-tests"
+base_url = "http://localhost:8081"
+
+[library]
+root_path = {lib_dir:?}
+
+[covers]
+covers_path = {covers_dir:?}
+
+[database]
+url = "sqlite::memory:"
+
+[opds]
+auth_required = false
+alphabet_first_word_only = true
+
+[scanner]
+"#
+    );
+    toml::from_str(&toml_str).expect("test config should parse")
+}
+
 /// Build a Config with upload enabled.
 pub fn test_config_with_upload(lib_dir: &Path, covers_dir: &Path, upload_dir: &Path) -> Config {
     let toml_str = format!(

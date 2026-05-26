@@ -88,6 +88,11 @@ pub struct OpdsConfig {
     pub alphabet_menu: bool,
     #[serde(default)]
     pub hide_doubles: bool,
+    /// Restrict alphabet drill-down (Books / Authors / Series) to match only
+    /// the FIRST word of each name. Default `false` keeps the legacy
+    /// word-boundary behaviour where the prefix matches any word in the name.
+    #[serde(default)]
+    pub alphabet_first_word_only: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

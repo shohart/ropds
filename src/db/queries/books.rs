@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::db::queries::{PrefixMode, prefix_search};
 use crate::db::{DbBackend, DbPool};
 
 use crate::db::models::{AvailStatus, Book, CatType};
@@ -206,6 +207,7 @@ pub async fn search_by_title_prefix(
     limit: i32,
     offset: i32,
     hide_doubles: bool,
+    mode: PrefixMode,
 ) -> Result<Vec<Book>, sqlx::Error> {
     if prefix.is_empty() {
         return if hide_doubles {
@@ -231,37 +233,35 @@ pub async fn search_by_title_prefix(
                 .await
         };
     }
-    // Word-boundary prefix match: at start of the title or after a space.
-    let start_pat = format!("{prefix}%");
-    let word_pat = format!("% {prefix}%");
-    if hide_doubles {
-        let sql = pool.sql(
-            "SELECT * FROM books WHERE (search_title LIKE ? OR search_title LIKE ?) AND avail > 0 \
-             AND id IN (SELECT MIN(id) FROM books WHERE (search_title LIKE ? OR search_title LIKE ?) AND avail > 0 GROUP BY search_title, author_key) \
+    let pf = prefix_search("search_title", prefix, mode);
+    let raw = if hide_doubles {
+        format!(
+            "SELECT * FROM books WHERE {clause} AND avail > 0 \
+             AND id IN (SELECT MIN(id) FROM books WHERE {clause} AND avail > 0 \
+             GROUP BY search_title, author_key) \
              ORDER BY search_title LIMIT ? OFFSET ?",
-        );
-        sqlx::query_as::<_, Book>(&sql)
-            .bind(&start_pat)
-            .bind(&word_pat)
-            .bind(&start_pat)
-            .bind(&word_pat)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool.inner())
-            .await
+            clause = pf.clause,
+        )
     } else {
-        let sql = pool.sql(
-            "SELECT * FROM books WHERE (search_title LIKE ? OR search_title LIKE ?) AND avail > 0 \
+        format!(
+            "SELECT * FROM books WHERE {clause} AND avail > 0 \
              ORDER BY search_title LIMIT ? OFFSET ?",
-        );
-        sqlx::query_as::<_, Book>(&sql)
-            .bind(&start_pat)
-            .bind(&word_pat)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool.inner())
-            .await
+            clause = pf.clause,
+        )
+    };
+    let sql = pool.sql(&raw);
+    let mut q = sqlx::query_as::<_, Book>(&sql);
+    // Outer WHERE prefix binds.
+    for b in &pf.binds {
+        q = q.bind(b.as_str());
     }
+    // Inner subquery rebinds the same prefix when hide_doubles is on.
+    if hide_doubles {
+        for b in &pf.binds {
+            q = q.bind(b.as_str());
+        }
+    }
+    q.bind(limit).bind(offset).fetch_all(pool.inner()).await
 }
 
 pub async fn find_by_path_and_filename(
@@ -544,6 +544,7 @@ pub async fn count_by_title_prefix(
     pool: &DbPool,
     prefix: &str,
     hide_doubles: bool,
+    mode: PrefixMode,
 ) -> Result<i64, sqlx::Error> {
     if prefix.is_empty() {
         let sql = if hide_doubles {
@@ -556,21 +557,26 @@ pub async fn count_by_title_prefix(
         let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool.inner()).await?;
         return Ok(row.0);
     }
-    let start_pat = format!("{prefix}%");
-    let word_pat = format!("% {prefix}%");
-    let sql = if hide_doubles {
-        "SELECT COUNT(*) FROM (SELECT 1 FROM books \
-         WHERE (search_title LIKE ? OR search_title LIKE ?) AND avail > 0 \
-         GROUP BY search_title, author_key) AS t"
+    let pf = prefix_search("search_title", prefix, mode);
+    let raw = if hide_doubles {
+        format!(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM books \
+             WHERE {clause} AND avail > 0 \
+             GROUP BY search_title, author_key) AS t",
+            clause = pf.clause,
+        )
     } else {
-        "SELECT COUNT(*) FROM books WHERE (search_title LIKE ? OR search_title LIKE ?) AND avail > 0"
+        format!(
+            "SELECT COUNT(*) FROM books WHERE {clause} AND avail > 0",
+            clause = pf.clause,
+        )
     };
-    let sql = pool.sql(sql);
-    let row: (i64,) = sqlx::query_as(&sql)
-        .bind(&start_pat)
-        .bind(&word_pat)
-        .fetch_one(pool.inner())
-        .await?;
+    let sql = pool.sql(&raw);
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql);
+    for b in &pf.binds {
+        q = q.bind(b.as_str());
+    }
+    let row = q.fetch_one(pool.inner()).await?;
     Ok(row.0)
 }
 
@@ -747,6 +753,7 @@ pub async fn get_title_prefix_groups(
     pool: &DbPool,
     lang_code: i32,
     current_prefix: &str,
+    mode: PrefixMode,
 ) -> Result<Vec<(String, i64)>, sqlx::Error> {
     let titles: Vec<(String,)> = if current_prefix.is_empty() {
         let sql = pool.sql(
@@ -759,24 +766,25 @@ pub async fn get_title_prefix_groups(
             .fetch_all(pool.inner())
             .await?
     } else {
-        let start_pat = format!("{}%", current_prefix);
-        let word_pat = format!("% {}%", current_prefix);
-        let sql = pool.sql(
+        let pf = prefix_search("search_title", current_prefix, mode);
+        let raw = format!(
             "SELECT search_title FROM books \
-             WHERE avail > 0 AND (? = 0 OR lang_code = ?) \
-             AND (search_title LIKE ? OR search_title LIKE ?)",
+             WHERE avail > 0 AND (? = 0 OR lang_code = ?) AND {clause}",
+            clause = pf.clause,
         );
-        sqlx::query_as(&sql)
+        let sql = pool.sql(&raw);
+        let mut q = sqlx::query_as::<_, (String,)>(&sql)
             .bind(lang_code)
-            .bind(lang_code)
-            .bind(&start_pat)
-            .bind(&word_pat)
-            .fetch_all(pool.inner())
-            .await?
+            .bind(lang_code);
+        for b in &pf.binds {
+            q = q.bind(b.as_str());
+        }
+        q.fetch_all(pool.inner()).await?
     };
     Ok(super::authors::aggregate_word_prefix_groups(
         titles.iter().map(|(t,)| t.as_str()),
         current_prefix,
+        mode,
     ))
 }
 
@@ -1116,7 +1124,9 @@ mod tests {
     #[tokio::test]
     async fn test_title_prefix_groups_empty() {
         let pool = create_test_pool().await;
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert!(groups.is_empty());
     }
 
@@ -1128,7 +1138,9 @@ mod tests {
         insert_test_book(&pool, cat, "Beta", 2).await;
         insert_test_book(&pool, cat, "Charlie", 2).await;
 
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0], ("A".to_string(), 1));
         assert_eq!(groups[1], ("B".to_string(), 1));
@@ -1144,16 +1156,22 @@ mod tests {
         insert_test_book(&pool, cat, "Alpha", 2).await; // Latin
 
         // lang_code=1 (Cyrillic) — only 2 groups
-        let groups = get_title_prefix_groups(&pool, 1, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 1, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 2);
 
         // lang_code=2 (Latin) — only 1 group
-        let groups = get_title_prefix_groups(&pool, 2, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 2, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0, "A");
 
         // lang_code=0 (all) — all 3 groups
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 3);
     }
 
@@ -1169,13 +1187,17 @@ mod tests {
         insert_test_book(&pool, cat, "Bab", 2).await;
 
         // Top level: "A" with count=3, "B" with count=1
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0], ("A".to_string(), 3));
         assert_eq!(groups[1], ("B".to_string(), 1));
 
         // Drill into "A": 3 sub-groups
-        let groups = get_title_prefix_groups(&pool, 0, "A").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].0, "AA");
         assert_eq!(groups[1].0, "AB");
@@ -1191,17 +1213,23 @@ mod tests {
         insert_test_book(&pool, cat, "Abethree", 2).await;
 
         // Level 1: all under "A"
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0], ("A".to_string(), 3));
 
         // Level 2: all under "AB"
-        let groups = get_title_prefix_groups(&pool, 0, "A").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0], ("AB".to_string(), 3));
 
         // Level 3: three distinct 3-char prefixes
-        let groups = get_title_prefix_groups(&pool, 0, "AB").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "AB", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].0, "ABC");
         assert_eq!(groups[1].0, "ABD");
@@ -1221,17 +1249,21 @@ mod tests {
         insert_test_book(&pool, cat, "Lamabad Cafir", 2).await;
 
         // Drill into "A" — every title above has at least one word starting with A.
-        let groups = get_title_prefix_groups(&pool, 0, "A").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         let ab = groups.iter().find(|(p, _)| p == "AB").map(|(_, c)| *c);
         assert_eq!(ab, Some(3));
 
         // Drill into "AB" — only the three "real AB-word" titles.
-        let groups = get_title_prefix_groups(&pool, 0, "AB").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "AB", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         let total: i64 = groups.iter().map(|(_, c)| *c).sum();
         assert_eq!(total, 3);
 
         // Listing should return the same three titles, sorted by search_title.
-        let results = search_by_title_prefix(&pool, "AB", 100, 0, false)
+        let results = search_by_title_prefix(&pool, "AB", 100, 0, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         let titles: Vec<&str> = results.iter().map(|b| b.title.as_str()).collect();
@@ -1241,8 +1273,50 @@ mod tests {
         );
 
         // Count should agree with the listing.
-        let count = count_by_title_prefix(&pool, "AB", false).await.unwrap();
+        let count = count_by_title_prefix(&pool, "AB", false, PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(count, 3);
+    }
+
+    #[tokio::test]
+    async fn test_title_prefix_first_word_only_matches_only_title_start() {
+        let pool = create_test_pool().await;
+        let cat = ensure_catalog(&pool).await;
+        // Same fixture as the word-boundary test.
+        insert_test_book(&pool, cat, "Notes Abraham", 2).await;
+        insert_test_book(&pool, cat, "Aberdin", 2).await;
+        insert_test_book(&pool, cat, "Hakim Abdul Efendi", 2).await;
+        insert_test_book(&pool, cat, "Gabriel Casey", 2).await;
+        insert_test_book(&pool, cat, "Lamabad Cafir", 2).await;
+
+        // Drill "A" → "AB" sub-group must only contain titles whose FIRST word
+        // starts with AB — i.e., just "Aberdin".
+        let groups = get_title_prefix_groups(&pool, 0, "A", PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let ab = groups.iter().find(|(p, _)| p == "AB").map(|(_, c)| *c);
+        assert_eq!(ab, Some(1));
+
+        // Drill "AB" → only "ABE" from Aberdin.
+        let groups = get_title_prefix_groups(&pool, 0, "AB", PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let prefixes: Vec<&str> = groups.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(prefixes, vec!["ABE"]);
+
+        // Listing AB in FirstWord mode → only Aberdin.
+        let results = search_by_title_prefix(&pool, "AB", 100, 0, false, PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let titles: Vec<&str> = results.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, vec!["Aberdin"]);
+
+        // Count agrees.
+        let count = count_by_title_prefix(&pool, "AB", false, PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]
@@ -1257,7 +1331,9 @@ mod tests {
         insert_test_book(&pool, cat, "Bravo", 2).await;
         insert_test_book(&pool, cat, "Charlie", 2).await;
 
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0], ("A".to_string(), 3));
         assert_eq!(groups[1], ("B".to_string(), 2));
@@ -1279,7 +1355,9 @@ mod tests {
             .await
             .unwrap();
 
-        let groups = get_title_prefix_groups(&pool, 0, "").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0, "B");
     }
@@ -1293,27 +1371,27 @@ mod tests {
         insert_test_book(&pool, cat, "Beta", 2).await;
 
         // Prefix "A" matches "Alpha" and "Another"
-        let results = search_by_title_prefix(&pool, "A", 100, 0, false)
+        let results = search_by_title_prefix(&pool, "A", 100, 0, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Prefix "AL" matches only "Alpha"
-        let results = search_by_title_prefix(&pool, "AL", 100, 0, false)
+        let results = search_by_title_prefix(&pool, "AL", 100, 0, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Alpha");
 
         // Prefix "B" matches only "Beta"
-        let results = search_by_title_prefix(&pool, "B", 100, 0, false)
+        let results = search_by_title_prefix(&pool, "B", 100, 0, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Beta");
 
         // Prefix "Z" matches nothing
-        let results = search_by_title_prefix(&pool, "Z", 100, 0, false)
+        let results = search_by_title_prefix(&pool, "Z", 100, 0, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -1329,13 +1407,13 @@ mod tests {
         insert_test_book(&pool, cat, "Ad", 2).await;
 
         // Page 1: limit 2, offset 0
-        let page1 = search_by_title_prefix(&pool, "A", 2, 0, false)
+        let page1 = search_by_title_prefix(&pool, "A", 2, 0, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(page1.len(), 2);
 
         // Page 2: limit 2, offset 2
-        let page2 = search_by_title_prefix(&pool, "A", 2, 2, false)
+        let page2 = search_by_title_prefix(&pool, "A", 2, 2, false, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(page2.len(), 2);
@@ -1355,11 +1433,15 @@ mod tests {
         insert_test_book(&pool, cat, "Alpha", 2).await;
 
         // Drill into Cyrillic "А" — should see 2 sub-prefixes
-        let groups = get_title_prefix_groups(&pool, 1, "А").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 1, "А", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 2);
 
         // Drill into Latin "A" — should see 1 sub-prefix
-        let groups = get_title_prefix_groups(&pool, 2, "A").await.unwrap();
+        let groups = get_title_prefix_groups(&pool, 2, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0, "AL");
     }
@@ -1576,8 +1658,18 @@ mod tests {
         );
         assert_eq!(count_by_title_search(&pool, "FOO", false).await.unwrap(), 2);
         assert_eq!(count_by_title_search(&pool, "FOO", true).await.unwrap(), 1);
-        assert_eq!(count_by_title_prefix(&pool, "FO", false).await.unwrap(), 2);
-        assert_eq!(count_by_title_prefix(&pool, "FO", true).await.unwrap(), 1);
+        assert_eq!(
+            count_by_title_prefix(&pool, "FO", false, PrefixMode::WordBoundary)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            count_by_title_prefix(&pool, "FO", true, PrefixMode::WordBoundary)
+                .await
+                .unwrap(),
+            1
+        );
 
         update_title(&pool, b1, "Updated", "UPDATED", 3)
             .await
@@ -2137,7 +2229,12 @@ mod tests {
             count_by_title_search(&pool, "COUNT", true).await.unwrap(),
             2
         );
-        assert_eq!(count_by_title_prefix(&pool, "CO", true).await.unwrap(), 2);
+        assert_eq!(
+            count_by_title_prefix(&pool, "CO", true, PrefixMode::WordBoundary)
+                .await
+                .unwrap(),
+            2
+        );
         assert_eq!(count_by_genre(&pool, genre, true).await.unwrap(), 2);
         assert_eq!(count_by_series(&pool, series, true).await.unwrap(), 2);
         assert_eq!(count_recent_added(&pool, true).await.unwrap(), 2);

@@ -1,3 +1,7 @@
+use crate::db::queries::{
+    PrefixMode, build_lang_prefix_count_sql, build_lang_prefix_listing_sql,
+    build_lang_prefix_names_sql, prefix_search,
+};
 use crate::db::{DbBackend, DbPool};
 
 use crate::db::models::Author;
@@ -35,6 +39,7 @@ pub async fn get_by_lang_code_prefix(
     prefix: &str,
     limit: i32,
     offset: i32,
+    mode: PrefixMode,
 ) -> Result<Vec<Author>, sqlx::Error> {
     if prefix.is_empty() {
         let sql = pool.sql(
@@ -49,23 +54,16 @@ pub async fn get_by_lang_code_prefix(
             .fetch_all(pool.inner())
             .await;
     }
-    // Word-boundary prefix match: either at start of the name or after a space.
-    let start_pat = format!("{prefix}%");
-    let word_pat = format!("% {prefix}%");
-    let sql = pool.sql(
-        "SELECT * FROM authors WHERE (? = 0 OR lang_code = ?) \
-         AND (search_full_name LIKE ? OR search_full_name LIKE ?) \
-         ORDER BY search_full_name LIMIT ? OFFSET ?",
-    );
-    sqlx::query_as::<_, Author>(&sql)
+    let pf = prefix_search("search_full_name", prefix, mode);
+    let raw = build_lang_prefix_listing_sql("authors", "search_full_name", &pf);
+    let sql = pool.sql(&raw);
+    let mut q = sqlx::query_as::<_, Author>(&sql)
         .bind(lang_code)
-        .bind(lang_code)
-        .bind(&start_pat)
-        .bind(&word_pat)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool.inner())
-        .await
+        .bind(lang_code);
+    for b in &pf.binds {
+        q = q.bind(b.as_str());
+    }
+    q.bind(limit).bind(offset).fetch_all(pool.inner()).await
 }
 
 pub async fn find_by_name(pool: &DbPool, full_name: &str) -> Result<Option<Author>, sqlx::Error> {
@@ -221,6 +219,7 @@ pub async fn count_by_lang_code_prefix(
     pool: &DbPool,
     lang_code: i32,
     prefix: &str,
+    mode: PrefixMode,
 ) -> Result<i64, sqlx::Error> {
     if prefix.is_empty() {
         let sql = pool.sql("SELECT COUNT(*) FROM authors WHERE ? = 0 OR lang_code = ?");
@@ -231,19 +230,16 @@ pub async fn count_by_lang_code_prefix(
             .await?;
         return Ok(row.0);
     }
-    let start_pat = format!("{prefix}%");
-    let word_pat = format!("% {prefix}%");
-    let sql = pool.sql(
-        "SELECT COUNT(*) FROM authors WHERE (? = 0 OR lang_code = ?) \
-         AND (search_full_name LIKE ? OR search_full_name LIKE ?)",
-    );
-    let row: (i64,) = sqlx::query_as(&sql)
+    let pf = prefix_search("search_full_name", prefix, mode);
+    let raw = build_lang_prefix_count_sql("authors", &pf);
+    let sql = pool.sql(&raw);
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql)
         .bind(lang_code)
-        .bind(lang_code)
-        .bind(&start_pat)
-        .bind(&word_pat)
-        .fetch_one(pool.inner())
-        .await?;
+        .bind(lang_code);
+    for b in &pf.binds {
+        q = q.bind(b.as_str());
+    }
+    let row = q.fetch_one(pool.inner()).await?;
     Ok(row.0)
 }
 
@@ -257,6 +253,7 @@ pub async fn get_name_prefix_groups(
     pool: &DbPool,
     lang_code: i32,
     current_prefix: &str,
+    mode: PrefixMode,
 ) -> Result<Vec<(String, i64)>, sqlx::Error> {
     let names: Vec<(String,)> = if current_prefix.is_empty() {
         let sql = pool.sql("SELECT search_full_name FROM authors WHERE ? = 0 OR lang_code = ?");
@@ -266,36 +263,38 @@ pub async fn get_name_prefix_groups(
             .fetch_all(pool.inner())
             .await?
     } else {
-        let start_pat = format!("{}%", current_prefix);
-        let word_pat = format!("% {}%", current_prefix);
-        let sql = pool.sql(
-            "SELECT search_full_name FROM authors \
-             WHERE (? = 0 OR lang_code = ?) \
-             AND (search_full_name LIKE ? OR search_full_name LIKE ?)",
-        );
-        sqlx::query_as(&sql)
+        let pf = prefix_search("search_full_name", current_prefix, mode);
+        let raw = build_lang_prefix_names_sql("authors", "search_full_name", &pf);
+        let sql = pool.sql(&raw);
+        let mut q = sqlx::query_as::<_, (String,)>(&sql)
             .bind(lang_code)
-            .bind(lang_code)
-            .bind(&start_pat)
-            .bind(&word_pat)
-            .fetch_all(pool.inner())
-            .await?
+            .bind(lang_code);
+        for b in &pf.binds {
+            q = q.bind(b.as_str());
+        }
+        q.fetch_all(pool.inner()).await?
     };
     Ok(aggregate_word_prefix_groups(
         names.iter().map(|(n,)| n.as_str()),
         current_prefix,
+        mode,
     ))
 }
 
-/// Aggregate word-boundary prefix groups for a sequence of uppercased names.
+/// Aggregate prefix groups for a sequence of uppercased names.
 ///
 /// Each input row contributes once per distinct word-initial extension that
 /// starts with `current_prefix`. The extension is the matching word's first
 /// `current_prefix.chars().count() + 1` characters, or the whole word when it
 /// is exactly as long as `current_prefix`.
+///
+/// `mode` selects which words may produce a match:
+/// * [`PrefixMode::WordBoundary`] — any word in the name (default).
+/// * [`PrefixMode::FirstWord`] — only the first whitespace-separated word.
 pub(crate) fn aggregate_word_prefix_groups<'a, I>(
     names: I,
     current_prefix: &str,
+    mode: PrefixMode,
 ) -> Vec<(String, i64)>
 where
     I: IntoIterator<Item = &'a str>,
@@ -307,7 +306,12 @@ where
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     for name in names {
         let mut row_prefixes: BTreeSet<String> = BTreeSet::new();
-        for word in name.split_whitespace() {
+        let mut words = name.split_whitespace();
+        let iter: Box<dyn Iterator<Item = &str>> = match mode {
+            PrefixMode::WordBoundary => Box::new(words),
+            PrefixMode::FirstWord => Box::new(words.next().into_iter()),
+        };
+        for word in iter {
             let word_chars: Vec<char> = word.chars().collect();
             if word_chars.len() < prefix_len {
                 continue;
@@ -340,7 +344,8 @@ mod tests {
             "CASEY GABRIEL",
             "LAMABAD CAFIR",
         ];
-        let groups = aggregate_word_prefix_groups(names.iter().copied(), "");
+        let groups =
+            aggregate_word_prefix_groups(names.iter().copied(), "", PrefixMode::WordBoundary);
         let map: std::collections::HashMap<_, _> = groups.into_iter().collect();
         // A appears as the first letter of a word in three of the rows.
         assert_eq!(map.get("A"), Some(&3));
@@ -359,7 +364,8 @@ mod tests {
         // "GABRIEL" contains "AB" but not at a word boundary; aggregation
         // operates on word starts only and must skip it.
         let names = ["GABRIEL CASEY"];
-        let groups = aggregate_word_prefix_groups(names.iter().copied(), "AB");
+        let groups =
+            aggregate_word_prefix_groups(names.iter().copied(), "AB", PrefixMode::WordBoundary);
         assert!(groups.is_empty());
     }
 
@@ -368,8 +374,43 @@ mod tests {
         // When a word is exactly as long as the prefix it cannot be extended;
         // mirror the original SUBSTR semantics by returning the word as-is.
         let names = ["AB SOMETHING"];
-        let groups = aggregate_word_prefix_groups(names.iter().copied(), "AB");
+        let groups =
+            aggregate_word_prefix_groups(names.iter().copied(), "AB", PrefixMode::WordBoundary);
         assert_eq!(groups, vec![("AB".to_string(), 1)]);
+    }
+
+    #[test]
+    fn aggregate_word_prefix_groups_first_word_only_skips_inner_words() {
+        // Same data as the word-boundary test, but in FirstWord mode only the
+        // FIRST whitespace-separated word of each name contributes.
+        let names = [
+            "JOHNS ABRAHAM",      // first word = JOHNS  → contributes J
+            "ABERDIN LAURA",      // first word = ABERDIN → contributes A
+            "HAKIM ABDUL EFENDI", // first word = HAKIM   → contributes H
+            "CASEY GABRIEL",      // first word = CASEY   → contributes C
+            "LAMABAD CAFIR",      // first word = LAMABAD → contributes L
+        ];
+        let groups = aggregate_word_prefix_groups(names.iter().copied(), "", PrefixMode::FirstWord);
+        let map: std::collections::HashMap<_, _> = groups.into_iter().collect();
+        // No inner-word matches: A counts once (only ABERDIN), not three times.
+        assert_eq!(map.get("A"), Some(&1));
+        assert_eq!(map.get("J"), Some(&1));
+        assert_eq!(map.get("H"), Some(&1));
+        assert_eq!(map.get("C"), Some(&1));
+        assert_eq!(map.get("L"), Some(&1));
+        // E and G only appeared as inner-word starts; gone in first-word mode.
+        assert_eq!(map.get("E"), None);
+        assert_eq!(map.get("G"), None);
+    }
+
+    #[test]
+    fn aggregate_word_prefix_groups_first_word_drilldown_only_matches_start() {
+        // "HAKIM ABDUL EFENDI" matches "AB" in word-boundary mode (via ABDUL),
+        // but NOT in first-word mode (HAKIM does not start with AB).
+        let names = ["HAKIM ABDUL EFENDI", "ABERDIN LAURA"];
+        let groups =
+            aggregate_word_prefix_groups(names.iter().copied(), "AB", PrefixMode::FirstWord);
+        assert_eq!(groups, vec![("ABE".to_string(), 1)]);
     }
 
     async fn ensure_catalog(pool: &DbPool) -> i64 {
@@ -427,14 +468,18 @@ mod tests {
         let count = count_by_name_search(&pool, "ALI").await.unwrap();
         assert_eq!(count, 2);
 
-        let prefix = get_by_lang_code_prefix(&pool, 2, "AL", 100, 0)
+        let prefix = get_by_lang_code_prefix(&pool, 2, "AL", 100, 0, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(prefix.len(), 2);
-        let all_langs = get_by_lang_code_prefix(&pool, 0, "", 100, 0).await.unwrap();
+        let all_langs = get_by_lang_code_prefix(&pool, 0, "", 100, 0, PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(all_langs.len(), 3);
 
-        let groups = get_name_prefix_groups(&pool, 2, "A").await.unwrap();
+        let groups = get_name_prefix_groups(&pool, 2, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups, vec![("AL".to_string(), 2)]);
     }
 
@@ -461,7 +506,7 @@ mod tests {
             .unwrap();
 
         // Listing for prefix "AB" — three authors with a word starting with AB.
-        let by_ab = get_by_lang_code_prefix(&pool, 2, "AB", 100, 0)
+        let by_ab = get_by_lang_code_prefix(&pool, 2, "AB", 100, 0, PrefixMode::WordBoundary)
             .await
             .unwrap();
         let names: Vec<&str> = by_ab.iter().map(|a| a.full_name.as_str()).collect();
@@ -472,14 +517,23 @@ mod tests {
 
         // Listing for prefix "ab" — case-insensitive uppercasing happens at the
         // call site, so we mirror it here.
-        let by_ab_ci = get_by_lang_code_prefix(&pool, 2, &"ab".to_uppercase(), 100, 0)
-            .await
-            .unwrap();
+        let by_ab_ci = get_by_lang_code_prefix(
+            &pool,
+            2,
+            &"ab".to_uppercase(),
+            100,
+            0,
+            PrefixMode::WordBoundary,
+        )
+        .await
+        .unwrap();
         assert_eq!(by_ab_ci.len(), 3);
 
         // Drill-down from "A" — sub-group "AB" should aggregate the three rows
         // (their AB-extensions are ABR, ABE and ABD respectively).
-        let groups = get_name_prefix_groups(&pool, 2, "A").await.unwrap();
+        let groups = get_name_prefix_groups(&pool, 2, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         let ab_total: i64 = groups
             .iter()
             .filter(|(p, _)| p.starts_with("AB"))
@@ -488,7 +542,9 @@ mod tests {
         assert_eq!(ab_total, 3);
 
         // Drill into "AB" — three distinct sub-prefixes, one per author.
-        let groups = get_name_prefix_groups(&pool, 2, "AB").await.unwrap();
+        let groups = get_name_prefix_groups(&pool, 2, "AB", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         let prefixes: Vec<&str> = groups.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(prefixes, vec!["ABD", "ABE", "ABR"]);
         for (_, count) in &groups {
@@ -499,6 +555,26 @@ mod tests {
         // so a substring "AB" matches all five rows above.
         let total = count_by_name_search(&pool, "AB").await.unwrap();
         assert_eq!(total, 5);
+
+        // First-word mode: only the row whose first word starts with "AB"
+        // (Aberdin Laura) must satisfy the listing and the count.
+        let by_ab_first = get_by_lang_code_prefix(&pool, 2, "AB", 100, 0, PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let names: Vec<&str> = by_ab_first.iter().map(|a| a.full_name.as_str()).collect();
+        assert_eq!(names, vec!["Aberdin Laura"]);
+
+        let total_first = count_by_lang_code_prefix(&pool, 2, "AB", PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        assert_eq!(total_first, 1);
+
+        // Group aggregation under FirstWord: only ABE (from Aberdin).
+        let groups = get_name_prefix_groups(&pool, 2, "AB", PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let prefixes: Vec<&str> = groups.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(prefixes, vec!["ABE"]);
     }
 
     #[tokio::test]

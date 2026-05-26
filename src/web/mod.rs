@@ -171,6 +171,7 @@ mod tests {
                 show_covers: None,
                 alphabet_menu: true,
                 hide_doubles: false,
+                alphabet_first_word_only: false,
             },
             scanner: ScannerConfig {
                 schedule_minutes: vec![0],

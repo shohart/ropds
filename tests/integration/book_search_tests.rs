@@ -1,8 +1,42 @@
 use ropds::db;
+use ropds::db::DbPool;
 use ropds::db::queries::{authors, genres, series};
 use ropds::scanner;
 
 use super::*;
+
+/// Insert a catalog + a book straight into the DB, bypassing the scanner.
+/// Used by prefix-mode coverage which needs deterministic search-titles.
+async fn seed_book(pool: &DbPool, title: &str) {
+    let path = format!("/prefix-mode/{title}");
+    let sql = pool.sql("INSERT OR IGNORE INTO catalogs (path, cat_name) VALUES (?, 'pm')");
+    sqlx::query(&sql)
+        .bind(&path)
+        .execute(pool.inner())
+        .await
+        .unwrap();
+    let sql = pool.sql("SELECT id FROM catalogs WHERE path = ?");
+    let (cat_id,): (i64,) = sqlx::query_as(&sql)
+        .bind(&path)
+        .fetch_one(pool.inner())
+        .await
+        .unwrap();
+    let search_title = title.to_uppercase();
+    let sql = pool.sql(
+        "INSERT INTO books (catalog_id, filename, path, format, title, search_title, \
+         lang, lang_code, size, avail, cat_type, cover, cover_type) \
+         VALUES (?, ?, ?, 'fb2', ?, ?, 'en', 2, 100, 2, 0, 0, '')",
+    );
+    sqlx::query(&sql)
+        .bind(cat_id)
+        .bind(format!("{title}.fb2"))
+        .bind(&path)
+        .bind(title)
+        .bind(search_title)
+        .execute(pool.inner())
+        .await
+        .unwrap();
+}
 
 /// Helper: set up a scanned library with several test books and return (pool, config).
 async fn setup_library() -> (
@@ -277,4 +311,175 @@ async fn search_single_book_by_id() {
 
     let html = body_string(resp).await;
     assert!(html.contains("Test Book Title"));
+}
+
+// ── Alphabet drill-down: word-boundary (default) vs. first-word config ──
+//
+// These HTTP tests verify only that the `opds.alphabet_first_word_only`
+// flag is threaded from config into the title-prefix handler. The exact
+// matching semantics live in the lib-level tests around
+// `books::search_by_title_prefix` / `count_by_title_prefix` /
+// `get_title_prefix_groups`. We use the "no results" template fragment as
+// the marker because the page also renders a `random_book` widget in the
+// footer that can otherwise echo any seeded title regardless of the
+// search query.
+
+/// Default config: prefix matches at any word boundary, so a title whose
+/// ONLY AB-prefixed word is internal still surfaces under "AB".
+#[tokio::test]
+async fn search_title_prefix_default_matches_inner_word_titles() {
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+    let config = test_config(lib_dir.path(), covers_dir.path());
+
+    // First word is "Notes", inner word is "Abrazil" — only matches in
+    // word-boundary mode.
+    seed_book(&pool, "Notes Abrazil").await;
+
+    let state = test_app_state(pool, config);
+    let app = test_router(state);
+
+    let resp = get(app, "/web/search/books?type=b&q=AB").await;
+    assert_eq!(resp.status(), 200);
+    let html = body_string(resp).await;
+    assert!(
+        !html.contains("No results found"),
+        "word-boundary listing must match a title whose inner word starts with AB"
+    );
+}
+
+/// `opds.alphabet_first_word_only = true`: the same inner-word title is
+/// filtered out — the search returns no books and the page falls through
+/// to the "no results" branch.
+#[tokio::test]
+async fn search_title_prefix_first_word_only_skips_inner_words() {
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+    let config = test_config_first_word_only(lib_dir.path(), covers_dir.path());
+
+    seed_book(&pool, "Notes Abrazil").await;
+
+    let state = test_app_state(pool, config);
+    let app = test_router(state);
+
+    let resp = get(app, "/web/search/books?type=b&q=AB").await;
+    assert_eq!(resp.status(), 200);
+    let html = body_string(resp).await;
+    assert!(
+        html.contains("No results found"),
+        "first-word mode must NOT match a title whose only AB-prefixed word is internal"
+    );
+}
+
+/// Author drill-down should equally honour the first-word-only config.
+#[tokio::test]
+async fn authors_drill_down_first_word_only() {
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+    let config = test_config_first_word_only(lib_dir.path(), covers_dir.path());
+
+    authors::insert(&pool, "Aberdin Laura", "ABERDIN LAURA", 2)
+        .await
+        .unwrap();
+    authors::insert(&pool, "Hakim Abdul Efendi", "HAKIM ABDUL EFENDI", 2)
+        .await
+        .unwrap();
+
+    let state = test_app_state(pool, config);
+    let app = test_router(state);
+
+    let resp = get(app, "/web/authors/list?lang=2&prefix=AB").await;
+    assert_eq!(resp.status(), 200);
+    let html = body_string(resp).await;
+    assert!(html.contains("Aberdin Laura"));
+    assert!(
+        !html.contains("Hakim Abdul Efendi"),
+        "first-word mode must exclude inner-word matches in the author listing"
+    );
+}
+
+/// Series drill-down should equally honour the first-word-only config.
+#[tokio::test]
+async fn series_drill_down_first_word_only() {
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+    let config = test_config_first_word_only(lib_dir.path(), covers_dir.path());
+
+    series::insert(&pool, "Aberdin Saga", "ABERDIN SAGA", 2)
+        .await
+        .unwrap();
+    series::insert(&pool, "Notes Abraham", "NOTES ABRAHAM", 2)
+        .await
+        .unwrap();
+    // Touch `genres` so the import isn't flagged as unused in this file.
+    let _ = genres::get_by_id(&pool, 0, "en").await;
+
+    let state = test_app_state(pool, config);
+    let app = test_router(state);
+
+    let resp = get(app, "/web/series/list?lang=2&prefix=AB").await;
+    assert_eq!(resp.status(), 200);
+    let html = body_string(resp).await;
+    assert!(html.contains("Aberdin Saga"));
+    assert!(
+        !html.contains("Notes Abraham"),
+        "first-word mode must exclude inner-word matches in the series listing"
+    );
+}
+
+/// Regression: the OPDS v1 "begins-with" leaf (`/opds/search/books/b/...`)
+/// must honour `opds.alphabet_first_word_only`. Previously the leaf fell
+/// through to `search_by_title` (substring search), so a strict-mode
+/// drill-down group could open a feed full of inner/midword matches.
+#[tokio::test]
+async fn opds_v1_search_books_b_leaf_honours_first_word_only() {
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+    let config = test_config_first_word_only(lib_dir.path(), covers_dir.path());
+
+    seed_book(&pool, "Aberdin").await;
+    seed_book(&pool, "Notes Abrazil").await;
+
+    let state = test_app_state(pool, config);
+    let app = test_router(state);
+
+    let resp = get(app, "/opds/search/books/b/AB/").await;
+    assert_eq!(resp.status(), 200);
+    let xml = body_string(resp).await;
+    assert!(
+        xml.contains("Aberdin"),
+        "OPDS b-leaf in first-word mode should list Aberdin"
+    );
+    assert!(
+        !xml.contains("Notes Abrazil"),
+        "OPDS b-leaf must NOT fall back to substring search in first-word mode"
+    );
+}
+
+/// Companion regression: in the default word-boundary mode the same leaf
+/// must surface inner-word matches.
+#[tokio::test]
+async fn opds_v1_search_books_b_leaf_default_matches_inner_word() {
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+    let config = test_config(lib_dir.path(), covers_dir.path());
+
+    seed_book(&pool, "Notes Abrazil").await;
+
+    let state = test_app_state(pool, config);
+    let app = test_router(state);
+
+    let resp = get(app, "/opds/search/books/b/AB/").await;
+    assert_eq!(resp.status(), 200);
+    let xml = body_string(resp).await;
+    assert!(
+        xml.contains("Notes Abrazil"),
+        "OPDS b-leaf in word-boundary mode should include inner-word matches"
+    );
 }
