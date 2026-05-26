@@ -71,6 +71,10 @@ pub async fn admin_page(
     ctx.insert("cfg_split_items", &state.config.opds.split_items);
     ctx.insert("cfg_auth_required", &state.config.opds.auth_required);
     ctx.insert("cfg_alphabet_menu", &state.config.opds.alphabet_menu);
+    ctx.insert(
+        "cfg_alphabet_first_word_only",
+        &state.config.opds.alphabet_first_word_only,
+    );
     ctx.insert("cfg_hide_doubles", &state.config.opds.hide_doubles);
 
     // Upload config

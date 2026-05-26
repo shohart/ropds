@@ -5,7 +5,9 @@ use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
 
 use crate::db::models::{Author, Genre};
-use crate::db::queries::{authors, books, bookshelf, catalogs, genres, reading_positions, series};
+use crate::db::queries::{
+    PrefixMode, authors, books, bookshelf, catalogs, genres, reading_positions, series,
+};
 use crate::state::AppState;
 use crate::web::context::build_context;
 use crate::web::i18n;

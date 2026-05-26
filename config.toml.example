@@ -31,6 +31,12 @@ split_items = 300
 auth_required = true
 alphabet_menu = true
 hide_doubles = true
+# Restrict alphabet drill-down (Books / Authors / Series) to match only the
+# FIRST word of each name. Default `false` keeps the legacy word-boundary
+# behaviour: the prefix matches at any word boundary, so "Hakim Abdul Efendi"
+# would appear under the "AB" group via the inner word "Abdul". Set to `true`
+# to surface only names that themselves begin with the typed letters.
+alphabet_first_word_only = false
 
 [scanner]
 schedule_minutes = [0]

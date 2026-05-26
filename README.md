@@ -120,7 +120,7 @@ See [docker/README.md](docker/README.md) for the full deployment guide, includin
 ### Search
 
 - Full-text search across titles, authors, and series — from both OPDS and the web UI
-- Alphabetical prefix browsing with configurable split threshold for large collections
+- Alphabetical prefix browsing with configurable split threshold for large collections (default matches the prefix at any word boundary; set `opds.alphabet_first_word_only = true` to restrict matches to the first word of each name)
 - OpenSearch descriptor for OPDS client integration
 
 ### Bookshelf
@@ -204,7 +204,7 @@ All settings live in `config.toml`. See [config.toml.example](config.toml.exampl
 | `[library]` | Book root path, file extensions, ZIP/INPX support |
 | `[covers]` | `covers_path`, resize and compression (`cover_max_dimension_px`, `cover_jpeg_quality`), `show_covers` |
 | `[database]` | Connection URL — `sqlite://`, `postgres://`, or `mysql://` |
-| `[opds]` | Catalog title, pagination, auth |
+| `[opds]` | Catalog title, pagination, auth, alphabet drill-down mode (`alphabet_first_word_only`) |
 | `[scanner]` | Cron schedule, parallel workers, integrity checks |
 | `[web]` | Default language (`en`, `ru`), default theme (`light`, `dark`) |
 | `[upload]` | Enable/disable uploads, staging directory, size limit |

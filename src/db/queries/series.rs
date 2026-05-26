@@ -1,3 +1,7 @@
+use crate::db::queries::{
+    PrefixMode, build_lang_prefix_count_sql, build_lang_prefix_listing_sql,
+    build_lang_prefix_names_sql, prefix_search,
+};
 use crate::db::{DbBackend, DbPool};
 
 use crate::db::models::Series;
@@ -35,6 +39,7 @@ pub async fn get_by_lang_code_prefix(
     prefix: &str,
     limit: i32,
     offset: i32,
+    mode: PrefixMode,
 ) -> Result<Vec<Series>, sqlx::Error> {
     if prefix.is_empty() {
         let sql = pool.sql(
@@ -49,23 +54,16 @@ pub async fn get_by_lang_code_prefix(
             .fetch_all(pool.inner())
             .await;
     }
-    // Word-boundary prefix match: either at start of the name or after a space.
-    let start_pat = format!("{prefix}%");
-    let word_pat = format!("% {prefix}%");
-    let sql = pool.sql(
-        "SELECT * FROM series WHERE (? = 0 OR lang_code = ?) \
-         AND (search_ser LIKE ? OR search_ser LIKE ?) \
-         ORDER BY search_ser LIMIT ? OFFSET ?",
-    );
-    sqlx::query_as::<_, Series>(&sql)
+    let pf = prefix_search("search_ser", prefix, mode);
+    let raw = build_lang_prefix_listing_sql("series", "search_ser", &pf);
+    let sql = pool.sql(&raw);
+    let mut q = sqlx::query_as::<_, Series>(&sql)
         .bind(lang_code)
-        .bind(lang_code)
-        .bind(&start_pat)
-        .bind(&word_pat)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool.inner())
-        .await
+        .bind(lang_code);
+    for b in &pf.binds {
+        q = q.bind(b.as_str());
+    }
+    q.bind(limit).bind(offset).fetch_all(pool.inner()).await
 }
 
 pub async fn find_by_name(pool: &DbPool, ser_name: &str) -> Result<Option<Series>, sqlx::Error> {
@@ -183,6 +181,7 @@ pub async fn count_by_lang_code_prefix(
     pool: &DbPool,
     lang_code: i32,
     prefix: &str,
+    mode: PrefixMode,
 ) -> Result<i64, sqlx::Error> {
     if prefix.is_empty() {
         let sql = pool.sql("SELECT COUNT(*) FROM series WHERE ? = 0 OR lang_code = ?");
@@ -193,19 +192,16 @@ pub async fn count_by_lang_code_prefix(
             .await?;
         return Ok(row.0);
     }
-    let start_pat = format!("{prefix}%");
-    let word_pat = format!("% {prefix}%");
-    let sql = pool.sql(
-        "SELECT COUNT(*) FROM series WHERE (? = 0 OR lang_code = ?) \
-         AND (search_ser LIKE ? OR search_ser LIKE ?)",
-    );
-    let row: (i64,) = sqlx::query_as(&sql)
+    let pf = prefix_search("search_ser", prefix, mode);
+    let raw = build_lang_prefix_count_sql("series", &pf);
+    let sql = pool.sql(&raw);
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql)
         .bind(lang_code)
-        .bind(lang_code)
-        .bind(&start_pat)
-        .bind(&word_pat)
-        .fetch_one(pool.inner())
-        .await?;
+        .bind(lang_code);
+    for b in &pf.binds {
+        q = q.bind(b.as_str());
+    }
+    let row = q.fetch_one(pool.inner()).await?;
     Ok(row.0)
 }
 
@@ -217,6 +213,7 @@ pub async fn get_name_prefix_groups(
     pool: &DbPool,
     lang_code: i32,
     current_prefix: &str,
+    mode: PrefixMode,
 ) -> Result<Vec<(String, i64)>, sqlx::Error> {
     let names: Vec<(String,)> = if current_prefix.is_empty() {
         let sql = pool.sql("SELECT search_ser FROM series WHERE ? = 0 OR lang_code = ?");
@@ -226,24 +223,21 @@ pub async fn get_name_prefix_groups(
             .fetch_all(pool.inner())
             .await?
     } else {
-        let start_pat = format!("{}%", current_prefix);
-        let word_pat = format!("% {}%", current_prefix);
-        let sql = pool.sql(
-            "SELECT search_ser FROM series \
-             WHERE (? = 0 OR lang_code = ?) \
-             AND (search_ser LIKE ? OR search_ser LIKE ?)",
-        );
-        sqlx::query_as(&sql)
+        let pf = prefix_search("search_ser", current_prefix, mode);
+        let raw = build_lang_prefix_names_sql("series", "search_ser", &pf);
+        let sql = pool.sql(&raw);
+        let mut q = sqlx::query_as::<_, (String,)>(&sql)
             .bind(lang_code)
-            .bind(lang_code)
-            .bind(&start_pat)
-            .bind(&word_pat)
-            .fetch_all(pool.inner())
-            .await?
+            .bind(lang_code);
+        for b in &pf.binds {
+            q = q.bind(b.as_str());
+        }
+        q.fetch_all(pool.inner()).await?
     };
     Ok(super::authors::aggregate_word_prefix_groups(
         names.iter().map(|(n,)| n.as_str()),
         current_prefix,
+        mode,
     ))
 }
 
@@ -367,14 +361,18 @@ mod tests {
         let count = count_by_name_search(&pool, "ALP").await.unwrap();
         assert_eq!(count, 2);
 
-        let prefix = get_by_lang_code_prefix(&pool, 2, "AL", 100, 0)
+        let prefix = get_by_lang_code_prefix(&pool, 2, "AL", 100, 0, PrefixMode::WordBoundary)
             .await
             .unwrap();
         assert_eq!(prefix.len(), 2);
-        let all_langs = get_by_lang_code_prefix(&pool, 0, "", 100, 0).await.unwrap();
+        let all_langs = get_by_lang_code_prefix(&pool, 0, "", 100, 0, PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(all_langs.len(), 3);
 
-        let groups = get_name_prefix_groups(&pool, 2, "A").await.unwrap();
+        let groups = get_name_prefix_groups(&pool, 2, "A", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         assert_eq!(groups, vec![("AL".to_string(), 2)]);
     }
 
@@ -392,7 +390,7 @@ mod tests {
         insert(&pool, "Gabriel", "GABRIEL", 2).await.unwrap();
         insert(&pool, "Lamabad", "LAMABAD", 2).await.unwrap();
 
-        let by_ab = get_by_lang_code_prefix(&pool, 2, "AB", 100, 0)
+        let by_ab = get_by_lang_code_prefix(&pool, 2, "AB", 100, 0, PrefixMode::WordBoundary)
             .await
             .unwrap();
         let names: Vec<&str> = by_ab.iter().map(|s| s.ser_name.as_str()).collect();
@@ -401,9 +399,24 @@ mod tests {
         assert!(names.contains(&"Aberdin"));
         assert!(names.contains(&"Hakim Abdul Saga"));
 
-        let groups = get_name_prefix_groups(&pool, 2, "AB").await.unwrap();
+        let groups = get_name_prefix_groups(&pool, 2, "AB", PrefixMode::WordBoundary)
+            .await
+            .unwrap();
         let prefixes: Vec<&str> = groups.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(prefixes, vec!["ABD", "ABE", "ABR"]);
+
+        // First-word mode: only series whose FIRST word starts with "AB" match.
+        let by_ab_first = get_by_lang_code_prefix(&pool, 2, "AB", 100, 0, PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let names: Vec<&str> = by_ab_first.iter().map(|s| s.ser_name.as_str()).collect();
+        assert_eq!(names, vec!["Aberdin"]);
+
+        let groups = get_name_prefix_groups(&pool, 2, "AB", PrefixMode::FirstWord)
+            .await
+            .unwrap();
+        let prefixes: Vec<&str> = groups.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(prefixes, vec!["ABE"]);
     }
 
     #[tokio::test]

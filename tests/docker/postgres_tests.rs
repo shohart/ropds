@@ -1,6 +1,6 @@
 use super::*;
 use ropds::db::models::CatType;
-use ropds::db::queries::{authors, books, bookshelf, catalogs, genres, series};
+use ropds::db::queries::{PrefixMode, authors, books, bookshelf, catalogs, genres, series};
 use ropds::scanner;
 
 // ---------------------------------------------------------------------------
@@ -425,16 +425,22 @@ async fn pg_prefix_group_queries_work() {
     // "Alpha Book"  -> A (Alpha), B (Book)
     // "Alice Author" -> A (Alice + Author, deduped per row)
     // "Alpha Series" -> A (Alpha), S (Series)
-    let book_groups = books::get_title_prefix_groups(&pool, 0, "").await.unwrap();
+    let book_groups = books::get_title_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+        .await
+        .unwrap();
     assert_eq!(
         book_groups,
         vec![("A".to_string(), 1), ("B".to_string(), 1)]
     );
 
-    let author_groups = authors::get_name_prefix_groups(&pool, 0, "").await.unwrap();
+    let author_groups = authors::get_name_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+        .await
+        .unwrap();
     assert_eq!(author_groups, vec![("A".to_string(), 1)]);
 
-    let series_groups = series::get_name_prefix_groups(&pool, 0, "").await.unwrap();
+    let series_groups = series::get_name_prefix_groups(&pool, 0, "", PrefixMode::WordBoundary)
+        .await
+        .unwrap();
     assert_eq!(
         series_groups,
         vec![("A".to_string(), 1), ("S".to_string(), 1)]

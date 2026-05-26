@@ -401,11 +401,18 @@ pub async fn search_books(
         }
         "b" => {
             let term = params.q.to_uppercase();
-            let bks =
-                books::search_by_title_prefix(&state.db, &term, max_items, offset, hide_doubles)
-                    .await
-                    .unwrap_or_default();
-            let cnt = books::count_by_title_prefix(&state.db, &term, hide_doubles)
+            let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+            let bks = books::search_by_title_prefix(
+                &state.db,
+                &term,
+                max_items,
+                offset,
+                hide_doubles,
+                mode,
+            )
+            .await
+            .unwrap_or_default();
+            let cnt = books::count_by_title_prefix(&state.db, &term, hide_doubles, mode)
                 .await
                 .unwrap_or(0);
             ctx.insert("search_label", &params.q);
@@ -516,7 +523,8 @@ pub async fn books_browse(
     let split_items = state.config.opds.split_items as i64;
 
     let prefix = params.chars.to_uppercase();
-    let groups = books::get_title_prefix_groups(&state.db, params.lang, &prefix)
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let groups = books::get_title_prefix_groups(&state.db, params.lang, &prefix, mode)
         .await
         .unwrap_or_default();
 
@@ -549,7 +557,8 @@ pub async fn authors_browse(
     let split_items = state.config.opds.split_items as i64;
 
     let prefix = params.chars.to_uppercase();
-    let groups = authors::get_name_prefix_groups(&state.db, params.lang, &prefix)
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let groups = authors::get_name_prefix_groups(&state.db, params.lang, &prefix, mode)
         .await
         .unwrap_or_default();
 
@@ -583,7 +592,8 @@ pub async fn series_browse(
     let split_items = state.config.opds.split_items as i64;
 
     let prefix = params.chars.to_uppercase();
-    let groups = series::get_name_prefix_groups(&state.db, params.lang, &prefix)
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let groups = series::get_name_prefix_groups(&state.db, params.lang, &prefix, mode)
         .await
         .unwrap_or_default();
 
@@ -772,11 +782,12 @@ pub async fn authors_list_by_prefix(
     let offset = params.page * max_items;
 
     let prefix = params.prefix.to_uppercase();
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
     let items =
-        authors::get_by_lang_code_prefix(&state.db, params.lang, &prefix, max_items, offset)
+        authors::get_by_lang_code_prefix(&state.db, params.lang, &prefix, max_items, offset, mode)
             .await
             .unwrap_or_default();
-    let total = authors::count_by_lang_code_prefix(&state.db, params.lang, &prefix)
+    let total = authors::count_by_lang_code_prefix(&state.db, params.lang, &prefix, mode)
         .await
         .unwrap_or(0);
 
@@ -822,10 +833,12 @@ pub async fn series_list_by_prefix(
     let offset = params.page * max_items;
 
     let prefix = params.prefix.to_uppercase();
-    let items = series::get_by_lang_code_prefix(&state.db, params.lang, &prefix, max_items, offset)
-        .await
-        .unwrap_or_default();
-    let total = series::count_by_lang_code_prefix(&state.db, params.lang, &prefix)
+    let mode = PrefixMode::from_first_word_only(state.config.opds.alphabet_first_word_only);
+    let items =
+        series::get_by_lang_code_prefix(&state.db, params.lang, &prefix, max_items, offset, mode)
+            .await
+            .unwrap_or_default();
+    let total = series::count_by_lang_code_prefix(&state.db, params.lang, &prefix, mode)
         .await
         .unwrap_or(0);
 
