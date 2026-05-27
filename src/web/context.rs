@@ -61,9 +61,11 @@ pub async fn build_context(state: &AppState, jar: &CookieJar, active_page: &str)
         .and_then(|v| v.get("read_badge"))
         .and_then(|v| v.as_str())
         .unwrap_or("read");
+    let mut available_locales: Vec<&str> = state.translations.keys().map(String::as_str).collect();
+    available_locales.sort_unstable();
     ctx.insert("t", t);
     ctx.insert("locale", &locale);
-    ctx.insert("available_locales", &["en", "ru"]);
+    ctx.insert("available_locales", &available_locales);
     ctx.insert("reader_read_badge", reader_read_badge);
 
     // Theme (server only knows the default; JS handles runtime switching)

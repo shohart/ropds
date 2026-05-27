@@ -168,7 +168,7 @@
                 <li>
                   <a class="dropdown-item lang-link{% if loc == locale %} active{% endif %}"
                      href="/web/set-language?lang={{ loc }}&redirect=/web">
-                    {% if loc == "en" %}English{% elif loc == "ru" %}Русский{% else %}{{ loc }}{% endif %}
+                    {{ t.lang[loc] | default(value=loc) }}
                   </a>
                 </li>
                 {% endfor %}
