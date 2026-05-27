@@ -180,9 +180,16 @@ See [docker/README.md](docker/README.md) for the full deployment guide, includin
 ### Internationalization
 
 - Ships with **English** and **Russian** locales
-- Locale files are plain TOML — adding a language is as easy as copying `en.toml` and translating the strings
+- Locale files are plain TOML in `locales/` — the file stem is the locale code (`en.toml` → `en`)
 - Genre names support per-language translations in the database
 - Per-user language preference saved in a cookie
+
+#### Adding a new locale
+
+1. Copy `locales/en.toml` to `locales/<code>.toml` (e.g. `de.toml`) and translate every value.
+2. In the new file's `[lang]` section, add an entry for the new code with its native name (e.g. `de = "Deutsch"`). This label is used by the OPDS language facet.
+3. Add the same `<code> = "<Native name>"` entry to the `[lang]` section of **every other** locale file so the web language selector shows a translated label in each UI language.
+4. Rebuild — locales are discovered automatically from the `locales/` directory (filesystem in debug, embedded in release). No source-code changes required.
 
 ### Security
 
