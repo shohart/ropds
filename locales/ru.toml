@@ -94,6 +94,7 @@ toggle = "Переключить тему"
 [lang]
 en = "English"
 ru = "Русский"
+de = "Deutsch"
 switch = "Язык"
 
 [opds]

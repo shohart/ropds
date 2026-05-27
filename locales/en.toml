@@ -91,6 +91,7 @@ toggle = "Toggle theme"
 [lang]
 en = "English"
 ru = "Русский"
+de = "Deutsch"
 switch = "Language"
 
 [opds]
