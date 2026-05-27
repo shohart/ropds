@@ -1,6 +1,6 @@
 [package]
 name = "ropds"
-version = "0.11.4"
+version = "0.11.5"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -62,7 +62,7 @@ argon2 = "0.5"
 openidconnect = "4.0.1"
 oauth2         = "5.0"
 reqwest    = { version = "0.12.28", features = ["json", "rustls-tls"], default-features = false }
-lettre     = { version = "0.11.21", features = ["tokio1", "tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
+lettre     = { version = "0.11.22", features = ["tokio1", "tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
 rand       = "0.10.1"
 
 # CLI
@@ -82,11 +82,11 @@ http-body-util = "0.1"
 
 [build-dependencies]
 walkdir = "2"
-oxc_allocator = "0.130.0"
-oxc_codegen = "0.130.0"
-oxc_minifier = "0.130.0"
-oxc_parser = "0.130.0"
-oxc_span = "0.130.0"
+oxc_allocator = "0.133.0"
+oxc_codegen = "0.133.0"
+oxc_minifier = "0.133.0"
+oxc_parser = "0.133.0"
+oxc_span = "0.133.0"
 sha2 = "0.11"
 hex = "0.4"
 

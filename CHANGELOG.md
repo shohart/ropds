@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026.05.27
+
+### Added
+- A German (Deutsch) interface locale is now bundled alongside English and Russian. The language selector lists every available locale automatically and labels each one with its native name.
+
+### Fixed
+- Adding a new interface language no longer requires source-code changes. Dropping a translated TOML file into the `locales/` directory is enough — the web language selector, OPDS language facet, and runtime fallback all pick it up automatically. The README documents the streamlined process in both English and Russian.
+
 ## [0.11.4] - 2026.05.26
 
 ### Added
