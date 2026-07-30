@@ -145,6 +145,19 @@ main {
   border-bottom: none;
 }
 
+/* Genre badges on book cards.
+   Bootstrap's .badge sets white-space: nowrap, so a long genre name renders
+   as one unbreakable box that overflows the card and forces horizontal page
+   scrolling on narrow screens. Let the text wrap inside the badge instead. */
+.book-genres-badges .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+  vertical-align: middle;
+  margin-bottom: 0.25rem;
+}
+
 /* Footer */
 footer {
   border-top: 1px solid var(--bs-border-color);
