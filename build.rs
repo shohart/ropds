@@ -232,7 +232,7 @@ fn preferred_source_type(path: &Path) -> SourceType {
 fn minify_with_source_type(source_text: &str, source_type: SourceType) -> io::Result<String> {
     let allocator = Allocator::default();
     let parser_return = Parser::new(&allocator, source_text, source_type).parse();
-    if !parser_return.errors.is_empty() {
+    if !parser_return.diagnostics.is_empty() {
         return Err(io::Error::other("parse error"));
     }
     let mut program = parser_return.program;
