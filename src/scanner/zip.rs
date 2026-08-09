@@ -53,12 +53,13 @@ pub(super) async fn process_zip(
     // Read ZIP contents in a blocking task
     let zip_path_buf = zip_path.to_path_buf();
     let extensions_clone = ctx.extensions.clone();
+    let codepage = ctx.zip_codepage.clone();
     let test_files = ctx.test_files;
 
     let zip_entries = {
         let _permit = acquire_scan_permit(ctx).await?;
         tokio::task::spawn_blocking(move || {
-            read_zip_entries(&zip_path_buf, &extensions_clone, test_files)
+            read_zip_entries(&zip_path_buf, &extensions_clone, &codepage, test_files)
         })
         .await
         .map_err(|e| ScanError::Internal(e.to_string()))??
@@ -138,6 +139,7 @@ pub(super) async fn process_zip(
 fn for_each_matching_zip_entry<S, H>(
     path: &Path,
     extensions: &HashSet<String>,
+    codepage: &str,
     test_files: bool,
     mut should_take: S,
     mut handle: H,
@@ -162,7 +164,7 @@ where
             continue;
         }
 
-        let entry_name = entry.name().to_string();
+        let entry_name = crate::zipname::entry_name(&entry, codepage);
         let filename = Path::new(&entry_name)
             .file_name()
             .unwrap_or_default()
@@ -207,6 +209,7 @@ where
 pub(super) fn read_zip_entries(
     path: &Path,
     extensions: &HashSet<String>,
+    codepage: &str,
     test_files: bool,
 ) -> Result<Vec<ZipBookEntry>, ScanError> {
     let mut entries = Vec::new();
@@ -214,6 +217,7 @@ pub(super) fn read_zip_entries(
     for_each_matching_zip_entry(
         path,
         extensions,
+        codepage,
         test_files,
         |_, _, _| true,
         |filename, ext, declared_size, data| {
@@ -234,6 +238,7 @@ pub(super) fn read_zip_entries(
 pub(super) fn read_selected_zip_entries_meta(
     path: &Path,
     extensions: &HashSet<String>,
+    codepage: &str,
     needed_filenames: &HashSet<String>,
     test_files: bool,
     cover_cfg: CoverImageConfig,
@@ -243,6 +248,7 @@ pub(super) fn read_selected_zip_entries_meta(
     for_each_matching_zip_entry(
         path,
         extensions,
+        codepage,
         test_files,
         |_, filename, _| needed_filenames.contains(filename),
         |filename, ext, _, data| {

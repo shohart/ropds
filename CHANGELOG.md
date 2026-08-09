@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `library.zip_codepage` is now actually applied. The setting was parsed and shown in the admin panel but never reached the scanner, so entry names of archives that do not flag their names as UTF-8 were always read as CP437. Non-English names inside such archives were stored as mojibake, and because ZIP lookups match on the raw name bytes, those books could not be downloaded, read, or have covers extracted at all — they failed with "File not found". Names are now decoded with the configured codepage, and entries are resolved by decoded name rather than by raw bytes. **Rescan the library to correct the stored filenames** — books recorded under a mangled name stay unreachable until you do.
+
 ## [0.11.6] - 2026.07.30
 
 ### Fixed

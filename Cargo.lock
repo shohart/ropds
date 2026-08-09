@@ -3720,6 +3720,7 @@ dependencies = [
  "chrono",
  "clap",
  "dashmap",
+ "encoding_rs",
  "hex",
  "hmac 0.13.0",
  "http-body-util",

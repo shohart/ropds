@@ -43,6 +43,7 @@ walkdir = "2"
 zip = "8.6.0"
 dashmap = "6"
 quick-xml = { version = "0.41.0", features = ["encoding"] }
+encoding_rs = "0.8"
 base64 = "0.23"
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "pnm"] }
 mobi = "0.8"

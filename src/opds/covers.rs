@@ -41,6 +41,7 @@ async fn serve_cover(state: &AppState, book_id: i64, as_thumbnail: bool) -> Resp
     let filename = book.filename.clone();
     let format = book.format.clone();
     let cat_type = book.cat_type;
+    let codepage = state.config.library.zip_codepage.clone();
     let cover_cfg = CoverImageConfig::from(&state.config.covers);
 
     // Try disk cache first, then fallback to re-extraction from book file
@@ -51,7 +52,9 @@ async fn serve_cover(state: &AppState, book_id: i64, as_thumbnail: bool) -> Resp
         }
 
         // 2. Fallback: re-extract from the book file
-        let extracted = extract_book_cover(&root, &path, &filename, &format, cat_type, cover_cfg)?;
+        let extracted = extract_book_cover(
+            &root, &path, &filename, &format, cat_type, &codepage, cover_cfg,
+        )?;
         let (cover_data, cover_mime) = crate::scanner::normalize_cover_for_storage_with_options(
             &extracted.0,
             &extracted.1,
@@ -155,9 +158,10 @@ fn extract_book_cover(
     filename: &str,
     format: &str,
     cat_type: i32,
+    codepage: &str,
     cover_cfg: CoverImageConfig,
 ) -> Option<(Vec<u8>, String)> {
-    let data = read_book_file(root, book_path, filename, cat_type).ok()?;
+    let data = read_book_file(root, book_path, filename, cat_type, codepage).ok()?;
 
     match format {
         "fb2" => {
@@ -209,6 +213,7 @@ fn read_book_file(
     book_path: &str,
     filename: &str,
     cat_type: i32,
+    codepage: &str,
 ) -> Result<Vec<u8>, std::io::Error> {
     use std::io::Read;
     match models::CatType::try_from(cat_type) {
@@ -221,8 +226,15 @@ fn read_book_file(
             let file = std::fs::File::open(&zip_path)?;
             let reader = BufReader::new(file);
             let mut archive = zip::ZipArchive::new(reader).map_err(std::io::Error::other)?;
+            let index = crate::zipname::find_entry_index(&mut archive, filename, codepage)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("'{filename}' not found in {book_path}"),
+                    )
+                })?;
             let mut entry = archive
-                .by_name(filename)
+                .by_index(index)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
             let mut data = Vec::new();
             entry.read_to_end(&mut data)?;

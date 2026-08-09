@@ -27,7 +27,13 @@ pub async fn download(
     let root = &state.config.library.root_path;
 
     // Read the book file bytes
-    let data = match read_book_file(root, &book.path, &book.filename, book.cat_type) {
+    let data = match read_book_file(
+        root,
+        &book.path,
+        &book.filename,
+        book.cat_type,
+        &state.config.library.zip_codepage,
+    ) {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!("Failed to read book {}: {e}", book_id);
@@ -64,6 +70,7 @@ pub fn read_book_file(
     book_path: &str,
     filename: &str,
     cat_type: i32,
+    codepage: &str,
 ) -> Result<Vec<u8>, std::io::Error> {
     match models::CatType::try_from(cat_type) {
         Ok(models::CatType::Normal) => {
@@ -79,8 +86,15 @@ pub fn read_book_file(
             let reader = std::io::BufReader::new(file);
             let mut archive = zip::ZipArchive::new(reader).map_err(std::io::Error::other)?;
 
+            let index = crate::zipname::find_entry_index(&mut archive, filename, codepage)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("'{filename}' not found in {book_path}"),
+                    )
+                })?;
             let mut entry = archive
-                .by_name(filename)
+                .by_index(index)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
 
             let mut data = Vec::new();
@@ -229,7 +243,8 @@ mod tests {
         std::fs::write(&full, b"plain-data").unwrap();
 
         let data =
-            read_book_file(dir.path(), "sub", "book.fb2", i32::from(CatType::Normal)).unwrap();
+            read_book_file(dir.path(), "sub", "book.fb2", i32::from(CatType::Normal), "cp866")
+                .unwrap();
         assert_eq!(data, b"plain-data");
     }
 
@@ -244,6 +259,7 @@ mod tests {
             "books.zip",
             "inside.fb2",
             i32::from(CatType::Zip),
+            "cp866",
         )
         .unwrap();
         assert_eq!(data, b"zip-data");
@@ -252,7 +268,7 @@ mod tests {
     #[test]
     fn test_read_book_file_unknown_cat_type() {
         let dir = tempdir().unwrap();
-        let err = read_book_file(dir.path(), "", "book.fb2", 999).unwrap_err();
+        let err = read_book_file(dir.path(), "", "book.fb2", 999, "cp866").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Other);
     }
 }

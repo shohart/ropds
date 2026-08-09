@@ -149,6 +149,7 @@ struct ScanContext {
     extensions: HashSet<String>,
     stats: Arc<ScanStats>,
     // Config flags
+    zip_codepage: String,
     skip_unchanged: bool,
     test_zip: bool,
     test_files: bool,
@@ -269,6 +270,7 @@ async fn do_scan(pool: &DbPool, config: &Config) -> Result<ScanStatsSnapshot, Sc
         concurrency_semaphore: Arc::new(Semaphore::new(workers_num.max(1))),
         extensions,
         stats: Arc::clone(&stats),
+        zip_codepage: config.library.zip_codepage.clone(),
         skip_unchanged: config.scanner.skip_unchanged,
         test_zip: config.scanner.test_zip,
         test_files: config.scanner.test_files,
@@ -663,7 +665,7 @@ mod tests {
         exts.insert("fb2".to_string());
         exts.insert("epub".to_string());
 
-        let entries = zip::read_zip_entries(&zip_path, &exts, false).unwrap();
+        let entries = zip::read_zip_entries(&zip_path, &exts, "cp866", false).unwrap();
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().any(|e| e.filename == "a.fb2"));
         assert!(entries.iter().any(|e| e.filename == "c.epub"));
@@ -678,7 +680,7 @@ mod tests {
 
         let exts = HashSet::from(["fb2".to_string()]);
         assert!(matches!(
-            zip::read_zip_entries(&bad, &exts, false),
+            zip::read_zip_entries(&bad, &exts, "cp866", false),
             Err(ScanError::Zip(_))
         ));
         assert!(matches!(

@@ -22,6 +22,7 @@ pub async fn web_download(
         &book.path,
         &book.filename,
         book.cat_type,
+        &state.config.library.zip_codepage,
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -204,6 +205,7 @@ pub async fn web_read_inline(
         &book.path,
         &book.filename,
         book.cat_type,
+        &state.config.library.zip_codepage,
     ) {
         Ok(d) => d,
         Err(e) => {
