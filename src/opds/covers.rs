@@ -1,4 +1,4 @@
-use std::io::{BufReader, Cursor};
+use std::io::Cursor;
 
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
@@ -6,9 +6,10 @@ use axum::response::{IntoResponse, Response};
 use image::imageops::FilterType;
 
 use crate::config::CoverImageConfig;
-use crate::db::models;
 use crate::db::queries::books;
 use crate::state::AppState;
+
+use super::download::read_book_file;
 
 const THUMB_SIZE: u32 = 200;
 const THUMB_JPEG_QUALITY: u8 = 85;
@@ -41,6 +42,7 @@ async fn serve_cover(state: &AppState, book_id: i64, as_thumbnail: bool) -> Resp
     let filename = book.filename.clone();
     let format = book.format.clone();
     let cat_type = book.cat_type;
+    let codepage = state.config.library.zip_codepage.clone();
     let cover_cfg = CoverImageConfig::from(&state.config.covers);
 
     // Try disk cache first, then fallback to re-extraction from book file
@@ -51,7 +53,9 @@ async fn serve_cover(state: &AppState, book_id: i64, as_thumbnail: bool) -> Resp
         }
 
         // 2. Fallback: re-extract from the book file
-        let extracted = extract_book_cover(&root, &path, &filename, &format, cat_type, cover_cfg)?;
+        let extracted = extract_book_cover(
+            &root, &path, &filename, &format, cat_type, &codepage, cover_cfg,
+        )?;
         let (cover_data, cover_mime) = crate::scanner::normalize_cover_for_storage_with_options(
             &extracted.0,
             &extracted.1,
@@ -155,9 +159,10 @@ fn extract_book_cover(
     filename: &str,
     format: &str,
     cat_type: i32,
+    codepage: &str,
     cover_cfg: CoverImageConfig,
 ) -> Option<(Vec<u8>, String)> {
-    let data = read_book_file(root, book_path, filename, cat_type).ok()?;
+    let data = read_book_file(root, book_path, filename, cat_type, codepage).ok()?;
 
     match format {
         "fb2" => {
@@ -200,35 +205,6 @@ fn extract_book_cover(
             }
         },
         _ => None,
-    }
-}
-
-/// Read a book file (same logic as download handler).
-fn read_book_file(
-    root: &std::path::Path,
-    book_path: &str,
-    filename: &str,
-    cat_type: i32,
-) -> Result<Vec<u8>, std::io::Error> {
-    use std::io::Read;
-    match models::CatType::try_from(cat_type) {
-        Ok(models::CatType::Normal) => {
-            let full_path = root.join(book_path).join(filename);
-            std::fs::read(&full_path)
-        }
-        Ok(models::CatType::Zip) | Ok(models::CatType::Inpx) | Ok(models::CatType::Inp) => {
-            let zip_path = root.join(book_path);
-            let file = std::fs::File::open(&zip_path)?;
-            let reader = BufReader::new(file);
-            let mut archive = zip::ZipArchive::new(reader).map_err(std::io::Error::other)?;
-            let mut entry = archive
-                .by_name(filename)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
-            let mut data = Vec::new();
-            entry.read_to_end(&mut data)?;
-            Ok(data)
-        }
-        Err(_) => Err(std::io::Error::other("Unknown cat_type")),
     }
 }
 

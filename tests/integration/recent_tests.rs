@@ -19,7 +19,7 @@ async fn setup_recent_library() -> (
         lib_dir.path(),
         &["test_book.fb2", "test_book.epub", "title_only.fb2"],
     );
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     (pool, config, lib_dir, covers_dir)
 }

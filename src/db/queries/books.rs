@@ -394,6 +394,21 @@ pub async fn set_avail(pool: &DbPool, id: i64, avail: AvailStatus) -> Result<(),
     Ok(())
 }
 
+/// Rename a book's stored filename in place, preserving its ID and relations.
+pub async fn rename_filename(
+    pool: &DbPool,
+    id: i64,
+    new_filename: &str,
+) -> Result<(), sqlx::Error> {
+    let sql = pool.sql("UPDATE books SET filename = ? WHERE id = ?");
+    sqlx::query(&sql)
+        .bind(new_filename)
+        .bind(id)
+        .execute(pool.inner())
+        .await?;
+    Ok(())
+}
+
 pub async fn set_avail_by_path(
     pool: &DbPool,
     path: &str,

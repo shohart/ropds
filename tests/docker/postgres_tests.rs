@@ -181,7 +181,7 @@ async fn pg_scanner_finds_books_and_metadata() {
 
     copy_test_files(lib_dir.path(), &["test_book.fb2"]);
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert!(stats.books_added >= 1);
 
     // Verify book was found
@@ -212,10 +212,10 @@ async fn pg_scanner_skips_existing_books() {
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "test_book.epub"]);
 
-    let stats1 = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats1 = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats1.books_added, 2);
 
-    let stats2 = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats2 = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats2.books_added, 0, "no new books on second scan");
     assert_eq!(stats2.books_skipped, 2, "both books should be skipped");
 }

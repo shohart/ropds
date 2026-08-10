@@ -24,7 +24,7 @@ pub async fn scan_now(
     let pool = state.db.clone();
     let config = (*state.config).clone();
     tokio::spawn(async move {
-        match crate::scanner::run_scan(&pool, &config).await {
+        match crate::scanner::run_scan(&pool, &config, false).await {
             Ok(ref stats) => {
                 tracing::info!(
                     "Manual scan finished: {} added, {} skipped, {} deleted, {} errors",

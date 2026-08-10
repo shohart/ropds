@@ -242,6 +242,7 @@ fn extract_book_from_zip(
     zip_data: &[u8],
     allowed_exts: &[String],
     max_bytes: u64,
+    encoding: Option<&'static encoding_rs::Encoding>,
 ) -> Result<(Vec<u8>, String, String), &'static str> {
     use std::io::{Cursor, Read};
 
@@ -261,7 +262,7 @@ fn extract_book_from_zip(
             continue;
         }
 
-        let name = entry.name().to_string();
+        let name = crate::zipname::entry_name(&entry, encoding);
         let ext = std::path::Path::new(&name)
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
@@ -424,7 +425,8 @@ pub async fn upload_file(
         if !state.config.library.scan_zip {
             return json_error(StatusCode::BAD_REQUEST, "error_unsupported");
         }
-        match extract_book_from_zip(&data, allowed_exts, max_bytes) {
+        let encoding = crate::zipname::resolve(&state.config.library.zip_codepage);
+        match extract_book_from_zip(&data, allowed_exts, max_bytes, encoding) {
             Ok(result) => result,
             Err(error_code) => return json_error(StatusCode::BAD_REQUEST, error_code),
         }
@@ -925,7 +927,8 @@ mod tests {
             ("books/test-book.fb2", b"book-bytes"),
         ]);
 
-        let (data, ext, filename) = extract_book_from_zip(&zip_data, &allowed, 10_000).unwrap();
+        let (data, ext, filename) =
+            extract_book_from_zip(&zip_data, &allowed, 10_000, None).unwrap();
         assert_eq!(data, b"book-bytes");
         assert_eq!(ext, "fb2");
         assert_eq!(filename, "test-book.fb2");
@@ -935,7 +938,7 @@ mod tests {
     fn test_extract_book_from_zip_multiple_books_rejected() {
         let allowed = vec!["fb2".to_string(), "epub".to_string()];
         let zip_data = make_zip(&[("a.fb2", b"one"), ("b.epub", b"two")]);
-        let err = extract_book_from_zip(&zip_data, &allowed, 10_000).unwrap_err();
+        let err = extract_book_from_zip(&zip_data, &allowed, 10_000, None).unwrap_err();
         assert_eq!(err, "error_unsupported");
     }
 
@@ -944,15 +947,31 @@ mod tests {
         let allowed = vec!["fb2".to_string()];
         let data = vec![b'x'; 32];
         let zip_data = make_zip(&[("large.fb2", &data)]);
-        let err = extract_book_from_zip(&zip_data, &allowed, 16).unwrap_err();
+        let err = extract_book_from_zip(&zip_data, &allowed, 16, None).unwrap_err();
         assert_eq!(err, "error_too_large");
+    }
+
+    #[test]
+    fn test_extract_book_from_zip_decodes_codepage_name() {
+        // "Книга.fb2" in CP866, as a DOS/Windows archiver would store it.
+        const CP866_NAME: &[u8] = b"\x8a\xad\xa8\xa3\xa0.fb2";
+        let zip_data = crate::zipname::tests::zip_with_raw_name(CP866_NAME);
+        let allowed = vec!["fb2".into()];
+        let (_, _, filename) = extract_book_from_zip(
+            &zip_data,
+            &allowed,
+            10_000,
+            crate::zipname::resolve("cp866"),
+        )
+        .unwrap();
+        assert_eq!(filename, "Книга.fb2");
     }
 
     #[test]
     fn test_extract_book_from_zip_no_supported_file() {
         let allowed = vec!["fb2".to_string()];
         let zip_data = make_zip(&[("notes.txt", b"text only")]);
-        let err = extract_book_from_zip(&zip_data, &allowed, 10_000).unwrap_err();
+        let err = extract_book_from_zip(&zip_data, &allowed, 10_000, None).unwrap_err();
         assert_eq!(err, "error_unsupported");
     }
 

@@ -13,7 +13,7 @@ async fn search_authors_by_name() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "no_cover.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
     let app = test_router(state);
@@ -38,7 +38,7 @@ async fn browse_authors_by_lang_and_prefix() {
         lib_dir.path(),
         &["test_book.fb2", "no_cover.fb2", "author_no_genre.fb2"],
     );
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool.clone(), config.clone());
 
@@ -74,7 +74,7 @@ async fn search_cyrillic_author() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["cyrillic_book.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
     let app = test_router(state);
@@ -103,7 +103,7 @@ async fn browse_cyrillic_authors() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["cyrillic_book.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
     let app = test_router(state);
@@ -130,7 +130,7 @@ async fn opds_authors_drill_down() {
         lib_dir.path(),
         &["test_book.fb2", "no_cover.fb2", "author_no_genre.fb2"],
     );
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
 
@@ -160,7 +160,7 @@ async fn opds_authors_list() {
         lib_dir.path(),
         &["test_book.fb2", "no_cover.fb2", "author_no_genre.fb2"],
     );
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
 

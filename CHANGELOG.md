@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- A `--force` flag for one-shot scans re-reads every archive, even ones that look unchanged.
+
+### Fixed
+- Books inside ZIP archives with non-English filenames were catalogued with garbled names and could not be downloaded, read, or have covers extracted. The configured archive codepage is now honored everywhere, and running one scan with `--force` repairs the stored names in place, keeping each book's ID, bookshelf entries, and reading progress. Uploading such archives through the web UI now stores the correct name as well.
+
 ## [0.11.6] - 2026.07.30
 
 ### Fixed
