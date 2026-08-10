@@ -1,4 +1,4 @@
-use std::io::{BufReader, Cursor};
+use std::io::Cursor;
 
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
@@ -6,9 +6,10 @@ use axum::response::{IntoResponse, Response};
 use image::imageops::FilterType;
 
 use crate::config::CoverImageConfig;
-use crate::db::models;
 use crate::db::queries::books;
 use crate::state::AppState;
+
+use super::download::read_book_file;
 
 const THUMB_SIZE: u32 = 200;
 const THUMB_JPEG_QUALITY: u8 = 85;
@@ -204,43 +205,6 @@ fn extract_book_cover(
             }
         },
         _ => None,
-    }
-}
-
-/// Read a book file (same logic as download handler).
-fn read_book_file(
-    root: &std::path::Path,
-    book_path: &str,
-    filename: &str,
-    cat_type: i32,
-    codepage: &str,
-) -> Result<Vec<u8>, std::io::Error> {
-    use std::io::Read;
-    match models::CatType::try_from(cat_type) {
-        Ok(models::CatType::Normal) => {
-            let full_path = root.join(book_path).join(filename);
-            std::fs::read(&full_path)
-        }
-        Ok(models::CatType::Zip) | Ok(models::CatType::Inpx) | Ok(models::CatType::Inp) => {
-            let zip_path = root.join(book_path);
-            let file = std::fs::File::open(&zip_path)?;
-            let reader = BufReader::new(file);
-            let mut archive = zip::ZipArchive::new(reader).map_err(std::io::Error::other)?;
-            let index = crate::zipname::find_entry_index(&mut archive, filename, codepage)
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("'{filename}' not found in {book_path}"),
-                    )
-                })?;
-            let mut entry = archive
-                .by_index(index)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
-            let mut data = Vec::new();
-            entry.read_to_end(&mut data)?;
-            Ok(data)
-        }
-        Err(_) => Err(std::io::Error::other("Unknown cat_type")),
     }
 }
 
