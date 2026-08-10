@@ -952,6 +952,22 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_book_from_zip_decodes_codepage_name() {
+        // "Книга.fb2" in CP866, as a DOS/Windows archiver would store it.
+        const CP866_NAME: &[u8] = b"\x8a\xad\xa8\xa3\xa0.fb2";
+        let zip_data = crate::zipname::tests::zip_with_raw_name(CP866_NAME);
+        let allowed = vec!["fb2".into()];
+        let (_, _, filename) = extract_book_from_zip(
+            &zip_data,
+            &allowed,
+            10_000,
+            crate::zipname::resolve("cp866"),
+        )
+        .unwrap();
+        assert_eq!(filename, "Книга.fb2");
+    }
+
+    #[test]
     fn test_extract_book_from_zip_no_supported_file() {
         let allowed = vec!["fb2".to_string()];
         let zip_data = make_zip(&[("notes.txt", b"text only")]);

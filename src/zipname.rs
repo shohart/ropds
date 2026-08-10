@@ -134,7 +134,7 @@ pub fn find_entry_index<R: Read + Seek>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// `Стругацкий - Страна багровых туч.fb2` as stored by a DOS/Windows
@@ -199,7 +199,7 @@ mod tests {
     }
 
     /// Build an in-memory ZIP with one entry whose name is raw `bytes`.
-    fn zip_with_raw_name(bytes: &[u8]) -> Vec<u8> {
+    pub(crate) fn zip_with_raw_name(bytes: &[u8]) -> Vec<u8> {
         use std::io::Write;
         // The `zip` writer always encodes names as UTF-8, so craft the archive
         // by hand to get a non-UTF-8 name with the language-encoding flag clear.
