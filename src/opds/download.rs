@@ -86,13 +86,17 @@ pub fn read_book_file(
             let reader = std::io::BufReader::new(file);
             let mut archive = zip::ZipArchive::new(reader).map_err(std::io::Error::other)?;
 
-            let index = crate::zipname::find_entry_index(&mut archive, filename, codepage)
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("'{filename}' not found in {book_path}"),
-                    )
-                })?;
+            let index = crate::zipname::find_entry_index(
+                &archive,
+                filename,
+                crate::zipname::resolve(codepage),
+            )
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("'{filename}' not found in {book_path}"),
+                )
+            })?;
             let mut entry = archive
                 .by_index(index)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
@@ -242,9 +246,14 @@ mod tests {
         let full = book_dir.join("book.fb2");
         std::fs::write(&full, b"plain-data").unwrap();
 
-        let data =
-            read_book_file(dir.path(), "sub", "book.fb2", i32::from(CatType::Normal), "cp866")
-                .unwrap();
+        let data = read_book_file(
+            dir.path(),
+            "sub",
+            "book.fb2",
+            i32::from(CatType::Normal),
+            "cp866",
+        )
+        .unwrap();
         assert_eq!(data, b"plain-data");
     }
 

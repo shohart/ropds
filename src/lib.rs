@@ -12,7 +12,7 @@ pub mod scheduler;
 pub mod state;
 pub mod util;
 pub mod web;
-pub mod zipname;
+mod zipname;
 
 use axum::Router;
 use axum::extract::State;

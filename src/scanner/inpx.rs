@@ -155,7 +155,7 @@ async fn process_inpx_zip_group(
     } else {
         let zip_abs_path_for_parse = zip_abs_path.clone();
         let exts = ctx.extensions.clone();
-        let codepage = ctx.zip_codepage.clone();
+        let encoding = ctx.zip_encoding;
         let test_files = ctx.test_files;
         let cover_cfg = ctx.cover_image_cfg;
 
@@ -165,7 +165,7 @@ async fn process_inpx_zip_group(
                 super::zip::read_selected_zip_entries_meta(
                     &zip_abs_path_for_parse,
                     &exts,
-                    &codepage,
+                    encoding,
                     &needed_filenames,
                     test_files,
                     cover_cfg,
