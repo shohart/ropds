@@ -101,7 +101,7 @@ pub async fn run(pool: DbPool, config: Config) {
             let pool = pool.clone();
             let config = config.clone();
             tokio::spawn(async move {
-                match scanner::run_scan(&pool, &config).await {
+                match scanner::run_scan(&pool, &config, false).await {
                     Ok(stats) => {
                         info!(
                             "Scheduled scan finished: added={}, skipped={}, deleted={}, archives_scanned={}, archives_skipped={}, errors={}",

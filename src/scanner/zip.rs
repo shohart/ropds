@@ -27,7 +27,9 @@ pub(super) async fn process_zip(
     };
 
     let zip_size = fs::metadata(zip_path)?.len() as i64;
-    if try_skip_zip_archive(&ctx.pool, &rel_zip, zip_size, ctx.skip_unchanged, mtime).await? {
+    if !ctx.force
+        && try_skip_zip_archive(&ctx.pool, &rel_zip, zip_size, ctx.skip_unchanged, mtime).await?
+    {
         ctx.stats.archives_skipped.fetch_add(1, Ordering::Relaxed);
         return Ok(());
     }

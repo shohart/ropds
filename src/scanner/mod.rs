@@ -118,7 +118,12 @@ pub struct ScanStatsSnapshot {
 // ---------------------------------------------------------------------------
 
 /// Run a full scan of the library directory.
-pub async fn run_scan(pool: &DbPool, config: &Config) -> Result<ScanStatsSnapshot, ScanError> {
+/// With `force`, re-read every archive even if its size and mtime are unchanged.
+pub async fn run_scan(
+    pool: &DbPool,
+    config: &Config,
+    force: bool,
+) -> Result<ScanStatsSnapshot, ScanError> {
     // Acquire scan lock
     if SCAN_LOCK
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -127,7 +132,7 @@ pub async fn run_scan(pool: &DbPool, config: &Config) -> Result<ScanStatsSnapsho
         return Err(ScanError::AlreadyRunning);
     }
 
-    let result = do_scan(pool, config).await;
+    let result = do_scan(pool, config, force).await;
 
     // Release lock
     SCAN_LOCK.store(false, Ordering::SeqCst);
@@ -150,6 +155,7 @@ struct ScanContext {
     stats: Arc<ScanStats>,
     // Config flags
     zip_encoding: Option<&'static encoding_rs::Encoding>,
+    force: bool,
     skip_unchanged: bool,
     test_zip: bool,
     test_files: bool,
@@ -218,7 +224,11 @@ enum PendingBookMsg {
 // do_scan — internal scan logic
 // ---------------------------------------------------------------------------
 
-async fn do_scan(pool: &DbPool, config: &Config) -> Result<ScanStatsSnapshot, ScanError> {
+async fn do_scan(
+    pool: &DbPool,
+    config: &Config,
+    force: bool,
+) -> Result<ScanStatsSnapshot, ScanError> {
     let root = &config.library.root_path;
     let covers_path = &config.covers.covers_path;
     let extensions: HashSet<String> = config
@@ -271,6 +281,7 @@ async fn do_scan(pool: &DbPool, config: &Config) -> Result<ScanStatsSnapshot, Sc
         extensions,
         stats: Arc::clone(&stats),
         zip_encoding: crate::zipname::resolve(&config.library.zip_codepage),
+        force,
         skip_unchanged: config.scanner.skip_unchanged,
         test_zip: config.scanner.test_zip,
         test_files: config.scanner.test_files,
@@ -731,7 +742,7 @@ root_path = "/tmp"
         .unwrap();
 
         SCAN_LOCK.store(true, Ordering::SeqCst);
-        let res = run_scan(&pool, &cfg).await;
+        let res = run_scan(&pool, &cfg, false).await;
         SCAN_LOCK.store(false, Ordering::SeqCst);
         assert!(matches!(res, Err(ScanError::AlreadyRunning)));
     }

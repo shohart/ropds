@@ -54,7 +54,7 @@ async fn catalog_page_lists_root_catalogs() {
     copy_test_files_to_subdir(lib_dir.path(), "fiction", &["test_book.fb2"]);
     copy_test_files_to_subdir(lib_dir.path(), "science", &["test_book.epub"]);
 
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
     let app = test_router(state);
@@ -78,7 +78,7 @@ async fn catalog_drill_down_shows_books() {
 
     copy_test_files_to_subdir(lib_dir.path(), "mybooks", &["test_book.fb2"]);
 
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     // Find the catalog ID for "mybooks"
     let cat = ropds::db::queries::catalogs::find_by_path(&pool, "mybooks")

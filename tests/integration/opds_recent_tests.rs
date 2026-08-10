@@ -12,7 +12,7 @@ async fn opds_recent_feed_returns_recent_books() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["title_only.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
     let app = test_router(state);

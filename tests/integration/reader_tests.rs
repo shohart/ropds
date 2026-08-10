@@ -19,7 +19,7 @@ async fn setup_with_user() -> (
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "test_book.epub"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let user_id = create_test_user(&pool, "reader_user", "password123", false).await;
     let session = session_cookie_value(user_id);
@@ -382,7 +382,7 @@ enable = false
     .unwrap();
 
     copy_test_files(lib_dir.path(), &["test_book.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let user_id = create_test_user(&pool, "reader_off", "password123", false).await;
     let session = session_cookie_value(user_id);

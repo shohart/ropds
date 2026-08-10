@@ -7,8 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- One-shot scans accept `--force` (`ropds --scan --force`) to re-read every archive even when its size and mtime are unchanged.
+
 ### Fixed
-- `library.zip_codepage` is now actually applied. The setting was parsed and shown in the admin panel but never reached the scanner, so entry names of archives that do not flag their names as UTF-8 were always read as CP437. Non-English names inside such archives were stored as mojibake, and because ZIP lookups match on the raw name bytes, those books could not be downloaded, read, or have covers extracted at all — they failed with "File not found". Names are now decoded with the configured codepage, and entries are resolved by decoded name rather than by raw bytes. **Rescan the library to correct the stored filenames** — books recorded under a mangled name stay unreachable until you do.
+- `library.zip_codepage` is now applied when scanning and serving books from ZIP archives: entries whose names are not flagged as UTF-8 are decoded with the configured codepage instead of CP437, so books with non-English names can be downloaded, read, and have covers extracted. If names were already stored as mojibake, run one scan with `--force` to correct them.
 
 ## [0.11.6] - 2026.07.30
 

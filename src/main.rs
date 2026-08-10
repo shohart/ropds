@@ -21,6 +21,10 @@ struct Cli {
     #[arg(long)]
     scan: bool,
 
+    /// With --scan, re-read every archive even if its size and mtime are unchanged
+    #[arg(long)]
+    force: bool,
+
     /// Create or update the admin user password and exit
     #[arg(long)]
     set_admin: Option<String>,
@@ -199,7 +203,7 @@ async fn main() {
     // One-shot scan mode
     if cli.scan {
         tracing::info!("Running one-shot scan...");
-        match ropds::scanner::run_scan(&pool, &config).await {
+        match ropds::scanner::run_scan(&pool, &config, cli.force).await {
             Ok(stats) => {
                 tracing::info!(
                     "Scan finished: added={}, skipped={}, deleted={}, archives_scanned={}, archives_skipped={}, errors={}",

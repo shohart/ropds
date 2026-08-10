@@ -27,7 +27,7 @@ async fn scan_adds_books_from_files() {
         ],
     );
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 5, "should add 5 books");
     assert_eq!(stats.books_skipped, 0, "nothing to skip on first scan");
 
@@ -50,7 +50,7 @@ async fn scan_adds_books_from_zip() {
 
     copy_test_files(lib_dir.path(), &["test_book.fb2.zip", "test_book.pdf.zip"]);
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 2, "should extract books from 2 ZIPs");
     assert_eq!(stats.archives_scanned, 2);
 
@@ -90,7 +90,7 @@ async fn scan_zip_duplicate_entries_insert_once() {
         zip.finish().unwrap();
     }
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(
         stats.books_added, 1,
         "duplicate ZIP entry should not double-insert"
@@ -150,7 +150,7 @@ async fn scan_inpx_enriches_annotation_and_cover_from_zip() {
         zip.finish().unwrap();
     }
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 1);
     assert_eq!(stats.archives_scanned, 1);
 
@@ -198,7 +198,7 @@ async fn scan_inpx_missing_referenced_zip_keeps_inpx_metadata_only() {
         zip.finish().unwrap();
     }
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 1);
     assert_eq!(stats.archives_scanned, 1);
 
@@ -267,7 +267,7 @@ async fn scan_inpx_enriches_multiple_archives_with_parallel_workers() {
         zip.finish().unwrap();
     }
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 2);
     assert_eq!(stats.archives_scanned, 1);
 
@@ -305,10 +305,10 @@ async fn scan_skips_existing_books() {
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "test_book.epub"]);
 
-    let stats1 = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats1 = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats1.books_added, 2);
 
-    let stats2 = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats2 = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats2.books_added, 0, "no new books on second scan");
     assert_eq!(stats2.books_skipped, 2, "both books should be skipped");
 }
@@ -324,12 +324,12 @@ async fn scan_deletes_removed_books() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "test_book.epub"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     // Remove one file
     std::fs::remove_file(lib_dir.path().join("test_book.fb2")).unwrap();
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_deleted, 1, "one book should be deleted");
     assert_eq!(stats.books_skipped, 1, "one book should remain");
 
@@ -352,12 +352,12 @@ async fn scan_skips_deletion_when_scan_has_errors() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "test_book.epub"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     std::fs::remove_file(lib_dir.path().join("test_book.fb2")).unwrap();
     std::fs::write(lib_dir.path().join("broken.zip"), b"not a real zip archive").unwrap();
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert!(stats.errors > 0, "scan should report at least one error");
     assert_eq!(
         stats.books_deleted, 0,
@@ -396,7 +396,7 @@ async fn scan_handles_metadata_variants() {
         ],
     );
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 5);
 
     // test_book.fb2 — full metadata
@@ -460,8 +460,8 @@ async fn scan_duplicate_path_detection() {
 
     copy_test_files(lib_dir.path(), &["test_book.fb2"]);
 
-    scanner::run_scan(&pool, &config).await.unwrap();
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM books WHERE filename = 'test_book.fb2'")
@@ -483,7 +483,7 @@ async fn scan_epub_metadata() {
 
     copy_test_files(lib_dir.path(), &["test_book.epub"]);
 
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let book = books::find_by_path_and_filename(&pool, "", "test_book.epub")
         .await
@@ -513,7 +513,7 @@ async fn scan_mobi_metadata() {
 
     copy_test_files(lib_dir.path(), &["test_book.mobi"]);
 
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let book = books::find_by_path_and_filename(&pool, "", "test_book.mobi")
         .await
@@ -553,7 +553,7 @@ async fn scan_lang_code_variants() {
         ],
     );
 
-    let stats = scanner::run_scan(&pool, &config).await.unwrap();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.books_added, 4);
 
     // Latin title → lang_code=2
@@ -611,11 +611,102 @@ async fn scan_books_have_confirmed_status() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["test_book.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let book = books::find_by_path_and_filename(&pool, "", "test_book.fb2")
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(book.avail, AvailStatus::Confirmed as i32);
+}
+
+/// Build an in-memory ZIP with one stored entry whose name is raw `bytes`.
+/// The `zip` writer always encodes names as UTF-8, so craft the archive by
+/// hand to get a non-UTF-8 name with the language-encoding flag clear.
+fn zip_with_raw_name(bytes: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let crc = crc32fast::hash(data);
+    let name_len = bytes.len() as u16;
+    let data_len = data.len() as u32;
+
+    buf.write_all(&0x0403_4b50u32.to_le_bytes()).unwrap();
+    buf.write_all(&[10, 0, 0, 0, 0, 0]).unwrap(); // version, flags (bit 11 clear), stored
+    buf.write_all(&[0, 0, 0, 0]).unwrap();
+    buf.write_all(&crc.to_le_bytes()).unwrap();
+    buf.write_all(&data_len.to_le_bytes()).unwrap();
+    buf.write_all(&data_len.to_le_bytes()).unwrap();
+    buf.write_all(&name_len.to_le_bytes()).unwrap();
+    buf.write_all(&0u16.to_le_bytes()).unwrap();
+    buf.write_all(bytes).unwrap();
+    buf.write_all(data).unwrap();
+
+    let cd_offset = buf.len() as u32;
+    buf.write_all(&0x0201_4b50u32.to_le_bytes()).unwrap();
+    buf.write_all(&[10, 0, 10, 0, 0, 0, 0, 0]).unwrap();
+    buf.write_all(&[0, 0, 0, 0]).unwrap();
+    buf.write_all(&crc.to_le_bytes()).unwrap();
+    buf.write_all(&data_len.to_le_bytes()).unwrap();
+    buf.write_all(&data_len.to_le_bytes()).unwrap();
+    buf.write_all(&name_len.to_le_bytes()).unwrap();
+    buf.write_all(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        .unwrap();
+    buf.write_all(&0u32.to_le_bytes()).unwrap();
+    buf.write_all(bytes).unwrap();
+    let cd_size = buf.len() as u32 - cd_offset;
+
+    buf.write_all(&0x0605_4b50u32.to_le_bytes()).unwrap();
+    buf.write_all(&[0, 0, 0, 0]).unwrap();
+    buf.write_all(&1u16.to_le_bytes()).unwrap();
+    buf.write_all(&1u16.to_le_bytes()).unwrap();
+    buf.write_all(&cd_size.to_le_bytes()).unwrap();
+    buf.write_all(&cd_offset.to_le_bytes()).unwrap();
+    buf.write_all(&0u16.to_le_bytes()).unwrap();
+    buf
+}
+
+/// A CP866-named ZIP entry is stored as mojibake under the default codepage;
+/// a forced rescan with `library.zip_codepage` set corrects the stored name.
+#[tokio::test]
+async fn force_rescan_applies_zip_codepage() {
+    let _lock = SCAN_MUTEX.lock().await;
+
+    // "Книга.fb2" in CP866, as a DOS/Windows archiver would store it.
+    const CP866_NAME: &[u8] = b"\x8a\xad\xa8\xa3\xa0.fb2";
+    const UTF8_NAME: &str = "Книга.fb2";
+
+    let pool = db::create_test_pool().await;
+    let lib_dir = tempfile::tempdir().unwrap();
+    let covers_dir = tempfile::tempdir().unwrap();
+
+    let fb2 = std::fs::read(test_data_dir().join("test_book.fb2")).unwrap();
+    std::fs::write(
+        lib_dir.path().join("books.zip"),
+        zip_with_raw_name(CP866_NAME, &fb2),
+    )
+    .unwrap();
+
+    // CP437 (the crate's decoding): the entry name is stored as mojibake.
+    let mut config = test_config(lib_dir.path(), covers_dir.path());
+    config.library.zip_codepage = "cp437".to_string();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
+    assert_eq!(stats.books_added, 1);
+    let book = books::find_by_path_and_filename(&pool, "books.zip", UTF8_NAME)
+        .await
+        .unwrap();
+    assert!(book.is_none(), "name should be mojibake before the fix");
+
+    // Codepage configured but the archive is unchanged: a normal rescan skips it.
+    config.library.zip_codepage = "cp866".to_string();
+    let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
+    assert_eq!(stats.archives_skipped, 1);
+    assert_eq!(stats.books_added, 0);
+
+    // Forced rescan re-reads the archive and stores the decoded name.
+    let stats = scanner::run_scan(&pool, &config, true).await.unwrap();
+    assert_eq!(stats.books_added, 1);
+    let book = books::find_by_path_and_filename(&pool, "books.zip", UTF8_NAME)
+        .await
+        .unwrap()
+        .expect("decoded name should be stored after forced rescan");
     assert_eq!(book.avail, AvailStatus::Confirmed as i32);
 }

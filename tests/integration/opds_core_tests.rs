@@ -56,7 +56,7 @@ async fn opds_recent_feed_has_prev_next_navigation() {
     config.opds.max_items = 1;
 
     copy_test_files(lib_dir.path(), &["test_book.fb2", "title_only.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let old_book = books::find_by_path_and_filename(&pool, "", "test_book.fb2")
         .await
@@ -104,7 +104,7 @@ async fn opds_book_search_returns_matching_entries() {
     let config = test_config(lib_dir.path(), covers_dir.path());
 
     copy_test_files(lib_dir.path(), &["title_only.fb2", "test_book.fb2"]);
-    scanner::run_scan(&pool, &config).await.unwrap();
+    scanner::run_scan(&pool, &config, false).await.unwrap();
 
     let state = test_app_state(pool, config);
     let app = test_router(state);

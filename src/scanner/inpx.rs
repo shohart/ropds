@@ -16,15 +16,16 @@ pub(super) async fn process_inpx(
         .to_string_lossy()
         .to_string();
 
-    if try_skip_inpx_archive(
-        &ctx.pool,
-        rel_path,
-        &inpx_dir,
-        inpx_size,
-        ctx.skip_unchanged,
-        mtime,
-    )
-    .await?
+    if !ctx.force
+        && try_skip_inpx_archive(
+            &ctx.pool,
+            rel_path,
+            &inpx_dir,
+            inpx_size,
+            ctx.skip_unchanged,
+            mtime,
+        )
+        .await?
     {
         ctx.stats.archives_skipped.fetch_add(1, Ordering::Relaxed);
         return Ok(());
