@@ -150,7 +150,7 @@ mod tests {
         // by hand to get a non-UTF-8 name with the language-encoding flag clear.
         let mut buf = Vec::new();
         let data = b"content";
-        let crc = crc32(data);
+        let crc = crc32fast::hash(data);
         let name_len = bytes.len() as u16;
 
         // Local file header
@@ -189,19 +189,6 @@ mod tests {
         buf.write_all(&0u16.to_le_bytes()).unwrap(); // comment len
         buf
     }
-
-    fn crc32(data: &[u8]) -> u32 {
-        let mut crc = 0xFFFF_FFFFu32;
-        for &byte in data {
-            crc ^= byte as u32;
-            for _ in 0..8 {
-                let mask = (crc & 1).wrapping_neg();
-                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
-            }
-        }
-        !crc
-    }
-
 
     #[test]
     fn finds_entry_by_decoded_name() {
