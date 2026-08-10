@@ -74,6 +74,19 @@ pub(super) async fn process_zip(
             continue;
         }
 
+        // A row stored under the legacy pre-codepage name is the same book:
+        // rename it in place so its ID and user relations survive.
+        if let Some(encoding) = ctx.zip_encoding
+            && let Some(legacy) = crate::zipname::mangle(&ze.filename, encoding)
+            && legacy != ze.filename
+            && let Some(legacy_id) = ctx.existing_book_id(&rel_zip, &legacy)
+        {
+            books::rename_filename(&ctx.pool, legacy_id, &ze.filename).await?;
+            ctx.mark_existing_book_confirmed(legacy_id);
+            ctx.stats.books_skipped.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+
         if books::find_by_path_and_filename(&ctx.pool, &rel_zip, &ze.filename)
             .await?
             .is_some()

@@ -98,9 +98,9 @@ fn cp437_decode(bytes: &[u8]) -> String {
 /// The name the `zip` crate shows for an entry whose raw name bytes are
 /// `wanted` encoded in `enc`: the CP437 decoding of those bytes.
 ///
-/// This relies on `enc.encode` inverting the scan-time decode, which
-/// holds for the error-free single-byte encodings this setting targets.
-fn mangle(wanted: &str, enc: &'static Encoding) -> Option<String> {
+/// Relies on `enc.encode` inverting the scan-time decode, which holds for
+/// the error-free single-byte encodings this setting targets.
+pub fn mangle(wanted: &str, enc: &'static Encoding) -> Option<String> {
     let (bytes, _, had_errors) = enc.encode(wanted);
     if had_errors {
         return None;

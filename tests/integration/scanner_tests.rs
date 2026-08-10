@@ -695,18 +695,35 @@ async fn force_rescan_applies_zip_codepage() {
         .unwrap();
     assert!(book.is_none(), "name should be mojibake before the fix");
 
+    // Attach user state to the mangled row: it must survive the repair.
+    let (legacy_id,): (i64,) = sqlx::query_as("SELECT id FROM books")
+        .fetch_one(pool.inner())
+        .await
+        .unwrap();
+    let user_id = create_test_user(&pool, "cpuser", "password123", false).await;
+    ropds::db::queries::bookshelf::upsert(&pool, user_id, legacy_id)
+        .await
+        .unwrap();
+
     // Codepage configured but the archive is unchanged: a normal rescan skips it.
     config.library.zip_codepage = "cp866".to_string();
     let stats = scanner::run_scan(&pool, &config, false).await.unwrap();
     assert_eq!(stats.archives_skipped, 1);
     assert_eq!(stats.books_added, 0);
 
-    // Forced rescan re-reads the archive and stores the decoded name.
+    // Forced rescan re-reads the archive and renames the row in place.
     let stats = scanner::run_scan(&pool, &config, true).await.unwrap();
-    assert_eq!(stats.books_added, 1);
+    assert_eq!(stats.books_added, 0, "repair must not insert a new book");
     let book = books::find_by_path_and_filename(&pool, "books.zip", UTF8_NAME)
         .await
         .unwrap()
         .expect("decoded name should be stored after forced rescan");
     assert_eq!(book.avail, AvailStatus::Confirmed as i32);
+    assert_eq!(book.id, legacy_id, "repair must keep the book ID");
+    assert!(
+        ropds::db::queries::bookshelf::is_on_shelf(&pool, user_id, legacy_id)
+            .await
+            .unwrap(),
+        "bookshelf entry must survive the rename"
+    );
 }
