@@ -546,8 +546,10 @@ fn bold_digits(n: usize) -> String {
 /// Spaces to pad the author line so its emoji sits directly under the book emoji.
 /// The book emoji is preceded by `"{number}. "` (e.g. "1. ", "47. ", "100. "), so the
 /// indent grows with the number of digits — handles multi-digit result numbers.
+/// A single extra space compensates for bold digits and emoji being slightly wider
+/// than regular glyphs in Telegram's proportional font.
 fn author_line_indent(number: usize) -> String {
-    " ".repeat(format!("{number}. ").chars().count())
+    " ".repeat(format!("{number}. ").chars().count() + 1)
 }
 
 fn format_emoji(format: &str) -> &'static str {
@@ -617,8 +619,8 @@ mod tests {
 
     #[test]
     fn author_line_indent_width() {
-        assert_eq!(author_line_indent(1), "   "); // "1. " = 3 chars
-        assert_eq!(author_line_indent(47), "    "); // "47. " = 4 chars
-        assert_eq!(author_line_indent(100), "     "); // "100. " = 5 chars
+        assert_eq!(author_line_indent(1), "    "); // "1. " = 3 chars + 1
+        assert_eq!(author_line_indent(47), "     "); // "47. " = 4 chars + 1
+        assert_eq!(author_line_indent(100), "      "); // "100. " = 5 chars + 1
     }
 }
