@@ -259,7 +259,7 @@ async fn build_search_message(
         }
 
         lines.push(format!(
-            "<b>{number}.</b> {book_emoji} <b>{}</b>\n{}",
+            "<blockquote><b>{number}.</b> {book_emoji} <b>{}</b>\n{}</blockquote>",
             escape_html(&book.title),
             second_line,
         ));
