@@ -252,7 +252,8 @@ async fn build_search_message(
         };
 
         let year = extract_year(&book.docdate);
-        let mut second_line = format!("{author_emoji} {}", escape_html(&author_display));
+        let indent = author_line_indent(number);
+        let mut second_line = format!("{indent}{author_emoji} {}", escape_html(&author_display));
         if !year.is_empty() {
             second_line.push_str(&format!(", {year}"));
         }
@@ -542,6 +543,13 @@ fn bold_digits(n: usize) -> String {
         .collect()
 }
 
+/// Spaces to pad the author line so its emoji sits directly under the book emoji.
+/// The book emoji is preceded by `"{number}. "` (e.g. "1. ", "47. ", "100. "), so the
+/// indent grows with the number of digits — handles multi-digit result numbers.
+fn author_line_indent(number: usize) -> String {
+    " ".repeat(format!("{number}. ").chars().count())
+}
+
 fn format_emoji(format: &str) -> &'static str {
     match format.to_ascii_lowercase().as_str() {
         "fb2" => "📄",
@@ -605,5 +613,12 @@ mod tests {
         assert_eq!(bold_digits(1), "𝟏");
         assert_eq!(bold_digits(10), "𝟏𝟎");
         assert_eq!(bold_digits(47), "𝟒𝟕");
+    }
+
+    #[test]
+    fn author_line_indent_width() {
+        assert_eq!(author_line_indent(1), "   "); // "1. " = 3 chars
+        assert_eq!(author_line_indent(47), "    "); // "47. " = 4 chars
+        assert_eq!(author_line_indent(100), "     "); // "100. " = 5 chars
     }
 }
