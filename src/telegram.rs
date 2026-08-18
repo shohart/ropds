@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use regex::Regex;
 use teloxide::dispatching::UpdateFilterExt;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode};
@@ -9,6 +11,15 @@ use tracing::{info, warn};
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::db::queries::{authors, books};
+
+/// In-memory pagination state for search results, keyed by chat.
+#[derive(Clone)]
+struct SearchState {
+    query: String,
+    page: usize,
+}
+
+type SearchCache = Arc<Mutex<HashMap<ChatId, SearchState>>>;
 
 pub fn build_client(proxy_url: &str) -> Result<reqwest::Client, reqwest::Error> {
     let mut builder = reqwest::Client::builder()
@@ -33,6 +44,7 @@ pub async fn run(pool: DbPool, config: Config) {
     };
     let bot = Bot::with_client(config.telegram.token.clone(), client);
     let config = Arc::new(config);
+    let search_cache: SearchCache = Arc::new(Mutex::new(HashMap::new()));
     info!("Telegram bot started");
 
     let handler = dptree::entry()
@@ -40,7 +52,7 @@ pub async fn run(pool: DbPool, config: Config) {
         .branch(Update::filter_callback_query().endpoint(handle_callback));
 
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![pool, config])
+        .dependencies(dptree::deps![pool, config, search_cache])
         .enable_ctrlc_handler()
         .build()
         .dispatch()
@@ -52,6 +64,7 @@ async fn handle_message(
     msg: Message,
     pool: DbPool,
     config: Arc<Config>,
+    search_cache: SearchCache,
 ) -> ResponseResult<()> {
     if !allowed_message(&msg, &config) {
         bot.send_message(msg.chat.id, "⛔ Доступ запрещён").await?;
@@ -63,17 +76,12 @@ async fn handle_message(
     if text == "/start" || text == "/help" {
         bot.send_message(
             msg.chat.id,
-            "📚 <b>ROPDS — домашняя библиотека</b>\n\n🔎 Отправьте часть названия книги или имени автора.\n⬇️ Затем выберите книгу и нужный формат.",
+            "📚 <b>ROPDS — домашняя библиотека</b>\n\n\
+             🔎 Отправьте часть названия книги или имя автора.\n\
+             👆 Нажмите на книгу в списке и выберите формат.",
         )
         .parse_mode(ParseMode::Html)
         .await?;
-        return Ok(());
-    }
-    if let Some(id) = text
-        .strip_prefix("/download")
-        .and_then(|v| v.parse::<i64>().ok())
-    {
-        send_book_card(&bot, msg.chat.id, &pool, &config, id).await?;
         return Ok(());
     }
     if text.chars().count() < 3 {
@@ -82,10 +90,9 @@ async fn handle_message(
         return Ok(());
     }
 
-    let found = books::search_title_or_author(&pool, text, config.telegram.max_results as i64)
-        .await
-        .unwrap_or_default();
-    if found.is_empty() {
+    let page_size = config.telegram.max_results.max(1) as i64;
+    let total = books::count_title_or_author(&pool, text).await.unwrap_or(0);
+    if total == 0 {
         bot.send_message(
             msg.chat.id,
             "❌ Ничего не найдено. Попробуйте другой запрос.",
@@ -93,24 +100,28 @@ async fn handle_message(
         .await?;
         return Ok(());
     }
-    let mut output = format!("✅ <b>Найдено: {}</b>\n\n", found.len());
-    for book in found {
-        let names = authors::get_for_book(&pool, book.id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|a| a.full_name)
-            .collect::<Vec<_>>()
-            .join(", ");
-        output.push_str(&format!(
-            "📖 <b>{}</b>\n✍️ {}\n⬇️ <code>/download{}</code>\n\n",
-            escape_html(&book.title),
-            escape_html(if names.is_empty() { "—" } else { &names }),
-            book.id
-        ));
+
+    let page = 0usize;
+    let total_pages = page_count(total, page_size);
+    let found = books::search_title_or_author(&pool, text, page_size, page as i64 * page_size)
+        .await
+        .unwrap_or_default();
+
+    if let Ok(mut cache) = search_cache.lock() {
+        cache.insert(
+            msg.chat.id,
+            SearchState {
+                query: text.to_string(),
+                page,
+            },
+        );
     }
-    bot.send_message(msg.chat.id, output)
+
+    let (body, markup) =
+        build_search_message(&pool, text, page, total, total_pages, &found).await?;
+    bot.send_message(msg.chat.id, body)
         .parse_mode(ParseMode::Html)
+        .reply_markup(markup)
         .await?;
     Ok(())
 }
@@ -133,18 +144,22 @@ async fn send_book_card(
         .map(|a| a.full_name)
         .collect::<Vec<_>>()
         .join(", ");
-    let mut buttons = vec![InlineKeyboardButton::callback(
-        format!("📄 {}", book.format.to_uppercase()),
+
+    // Format buttons stacked vertically — one per row, readable on narrow screens.
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    rows.push(vec![InlineKeyboardButton::callback(
+        format!("📄 Скачать {}", book.format.to_uppercase()),
         format!("get:{id}:orig"),
-    )];
+    )]);
     if book.format == "fb2" && config.convert.enabled {
         for format in &config.convert.formats {
-            buttons.push(InlineKeyboardButton::callback(
-                format!("⬇️ {}", format.to_uppercase()),
+            rows.push(vec![InlineKeyboardButton::callback(
+                format!("⬇️ Скачать {}", format.to_uppercase()),
                 format!("get:{id}:{format}"),
-            ));
+            )]);
         }
     }
+
     let annotation = strip_html(&book.annotation);
     let text = format!(
         "📖 <b>{}</b>\n✍️ {}\n\n<pre>Год:    {}\nЯзык:   {}\nРазмер: {} КБ\nФормат: {}</pre>{}",
@@ -173,9 +188,57 @@ async fn send_book_card(
     );
     bot.send_message(chat_id, text)
         .parse_mode(ParseMode::Html)
-        .reply_markup(InlineKeyboardMarkup::new([buttons]))
+        .reply_markup(InlineKeyboardMarkup::new(rows))
         .await?;
     Ok(())
+}
+
+async fn build_search_message(
+    pool: &DbPool,
+    query: &str,
+    page: usize,
+    total: i64,
+    total_pages: usize,
+    book_list: &[crate::db::models::Book],
+) -> ResponseResult<(String, InlineKeyboardMarkup)> {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    for book in book_list {
+        let author = authors::get_for_book(pool, book.id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| a.full_name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = candidate_label(&book.title, &author);
+        rows.push(vec![InlineKeyboardButton::callback(
+            label,
+            format!("card:{}", book.id),
+        )]);
+    }
+
+    if total_pages > 1 {
+        let mut nav = Vec::new();
+        if page > 0 {
+            nav.push(InlineKeyboardButton::callback("⬅️ Назад", "pg:prev"));
+        }
+        if page + 1 < total_pages {
+            nav.push(InlineKeyboardButton::callback("Вперёд ➡️", "pg:next"));
+        }
+        if !nav.is_empty() {
+            rows.push(nav);
+        }
+    }
+
+    let body = format!(
+        "🔎 <b>Результаты по запросу «{}»</b>\n📚 Найдено: {} · Страница {} из {}",
+        escape_html(query),
+        total,
+        page + 1,
+        total_pages.max(1),
+    );
+
+    Ok((body, InlineKeyboardMarkup::new(rows)))
 }
 
 async fn handle_callback(
@@ -183,6 +246,7 @@ async fn handle_callback(
     query: CallbackQuery,
     pool: DbPool,
     config: Arc<Config>,
+    search_cache: SearchCache,
 ) -> ResponseResult<()> {
     if !allowed_username(query.from.username.as_deref(), &config) {
         bot.answer_callback_query(query.id)
@@ -193,6 +257,81 @@ async fn handle_callback(
     let Some(data) = query.data.as_deref() else {
         return Ok(());
     };
+    let Some(message) = query.message else {
+        return Ok(());
+    };
+    let chat_id = message.chat().id;
+
+    // Candidate tap → open the book card.
+    if let Some(id) = data.strip_prefix("card:") {
+        bot.answer_callback_query(query.id).await?;
+        if let Ok(id) = id.parse::<i64>() {
+            send_book_card(&bot, chat_id, &pool, &config, id).await?;
+        }
+        return Ok(());
+    }
+
+    // Pagination.
+    if data == "pg:prev" || data == "pg:next" {
+        bot.answer_callback_query(query.id).await?;
+        let page_size = config.telegram.max_results.max(1) as i64;
+
+        // Read and update state under a short lock; never hold it across await.
+        let query_text = {
+            let mut cache = search_cache.lock().unwrap();
+            match cache.get_mut(&chat_id) {
+                Some(state) => {
+                    state.page = if data == "pg:next" {
+                        state.page.saturating_add(1)
+                    } else {
+                        state.page.saturating_sub(1)
+                    };
+                    Some(state.query.clone())
+                }
+                None => None,
+            }
+        };
+        let Some(query_text) = query_text else {
+            bot.send_message(
+                chat_id,
+                "⚠️ Сессия поиска устарела — введите запрос заново.",
+            )
+            .await?;
+            return Ok(());
+        };
+
+        let total = books::count_title_or_author(&pool, &query_text)
+            .await
+            .unwrap_or(0);
+        let total_pages = page_count(total, page_size).max(1);
+        let page = {
+            let mut cache = search_cache.lock().unwrap();
+            let page = match cache.get_mut(&chat_id) {
+                Some(state) => {
+                    state.page = state.page.min(total_pages - 1);
+                    state.page
+                }
+                None => 0,
+            };
+            page
+        };
+
+        let found =
+            books::search_title_or_author(&pool, &query_text, page_size, page as i64 * page_size)
+                .await
+                .unwrap_or_default();
+
+        let (body, markup) =
+            build_search_message(&pool, &query_text, page, total, total_pages, &found).await?;
+
+        bot.edit_message_text(chat_id, message.id(), body)
+            .parse_mode(ParseMode::Html)
+            .reply_markup(markup)
+            .await?;
+        return Ok(());
+    }
+
+    // Download request `get:{id}:{format}`.
     let parts: Vec<&str> = data.split(':').collect();
     if parts.len() != 3 || parts[0] != "get" {
         return Ok(());
@@ -223,23 +362,15 @@ async fn handle_callback(
         match crate::convert::convert(&config.convert, &original, &book.filename, format).await {
             Ok(data) => (data, format.to_string()),
             Err(e) => {
-                if let Some(message) = query.message {
-                    bot.send_message(message.chat().id, format!("❌ Ошибка конвертации: {e}"))
-                        .await?;
-                }
+                bot.send_message(chat_id, format!("❌ Ошибка конвертации: {e}"))
+                    .await?;
                 return Ok(());
             }
         }
     };
-    if let Some(message) = query.message {
-        let filename =
-            crate::opds::download::title_to_filename(&book.title, &target, &book.filename);
-        bot.send_document(
-            message.chat().id,
-            InputFile::memory(data).file_name(filename),
-        )
+    let filename = crate::opds::download::title_to_filename(&book.title, &target, &book.filename);
+    bot.send_document(chat_id, InputFile::memory(data).file_name(filename))
         .await?;
-    }
     Ok(())
 }
 
@@ -261,6 +392,33 @@ fn allowed_username(username: Option<&str>, config: &Config) -> bool {
         })
 }
 
+fn page_count(total: i64, page_size: i64) -> usize {
+    if total <= 0 {
+        0
+    } else {
+        ((total + page_size - 1) / page_size) as usize
+    }
+}
+
+fn candidate_label(title: &str, author: &str) -> String {
+    let base = if author.is_empty() {
+        format!("📖 {title}")
+    } else {
+        format!("📖 {title} — {author}")
+    };
+    truncate_chars(&base, 48)
+}
+
+fn truncate_chars(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        value.to_string()
+    } else {
+        let mut out: String = value.chars().take(max).collect();
+        out.push('…');
+        out
+    }
+}
+
 fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -274,5 +432,3 @@ fn strip_html(value: &str) -> String {
         .replace_all(value, "")
         .to_string()
 }
-
-use regex::Regex;
