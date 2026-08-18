@@ -218,35 +218,49 @@ async fn build_search_message(
     let mut lines: Vec<String> = Vec::new();
     let mut number_buttons: Vec<InlineKeyboardButton> = Vec::new();
 
+    // Per-page caches so the same author keeps one emoji, and different authors cycle.
+    let mut author_emoji_cache: HashMap<String, String> = HashMap::new();
+    let mut male_idx = 0usize;
+    let mut female_idx = 0usize;
+
     for (i, book) in book_list.iter().enumerate() {
         let number = start_index + i + 1;
-        let author = authors::get_for_book(pool, book.id)
+        let book_emoji = BOOK_EMOJIS[i % BOOK_EMOJIS.len()];
+
+        let book_authors = authors::get_for_book(pool, book.id)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|a| a.full_name)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let year = book.docdate.trim().to_string();
-        let mut second = String::new();
-        if !author.is_empty() {
-            second.push_str(&author);
-        }
+            .unwrap_or_default();
+        let author_names: Vec<String> = book_authors.iter().map(|a| a.full_name.clone()).collect();
+        let author_display = if author_names.is_empty() {
+            "—".to_string()
+        } else {
+            author_names.join(", ")
+        };
+        let primary = author_names.first().map(String::as_str).unwrap_or("");
+
+        let author_emoji = if let Some(e) = author_emoji_cache.get(primary) {
+            e.clone()
+        } else {
+            let (palette, counter) = match author_gender(primary) {
+                Gender::Female => (FEMALE_EMOJIS.as_slice(), &mut female_idx),
+                Gender::Male => (MALE_EMOJIS.as_slice(), &mut male_idx),
+            };
+            let e = palette[*counter % palette.len()].to_string();
+            *counter += 1;
+            author_emoji_cache.insert(primary.to_string(), e.clone());
+            e
+        };
+
+        let year = extract_year(&book.docdate);
+        let mut second_line = format!("{author_emoji} {}", escape_html(&author_display));
         if !year.is_empty() {
-            if !second.is_empty() {
-                second.push_str(", ");
-            }
-            second.push_str(&year);
-        }
-        if second.is_empty() {
-            second.push('—');
+            second_line.push_str(&format!(", {year}"));
         }
 
         lines.push(format!(
-            "{}. 📖 <b>{}</b>\n👤 {}",
-            number,
+            "<b>{number}.</b> {book_emoji} <b>{}</b>\n{}",
             escape_html(&book.title),
-            escape_html(&second),
+            second_line,
         ));
         number_buttons.push(InlineKeyboardButton::callback(
             number.to_string(),
@@ -455,6 +469,69 @@ fn page_count(total: i64, page_size: i64) -> usize {
     }
 }
 
+const BOOK_EMOJIS: [&str; 10] = ["📕", "📗", "📘", "📙", "📒", "📔", "📓", "📚", "📖", "🔖"];
+
+const MALE_EMOJIS: [&str; 7] = ["👨", "🧔", "👱‍♂️", "👨‍🦱", "👨‍🦰", "👨‍🦳", "👴"];
+
+const FEMALE_EMOJIS: [&str; 7] = ["👩", "👱‍♀️", "👩‍🦱", "👩‍🦰", "👩‍🦳", "👵", "🧕"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Gender {
+    Male,
+    Female,
+}
+
+/// Cheap Russian author gender heuristic: patronymic suffix is decisive
+/// (`-вич/-ич` male, `-вна/-чна/-шна` female), otherwise the given name's
+/// last letter (`а`/`я` → female). Approximate by design — it only picks an emoji.
+fn author_gender(full_name: &str) -> Gender {
+    let clean = |w: &str| w.trim_matches(|c: char| !c.is_alphabetic()).to_lowercase();
+    for word in full_name.split_whitespace() {
+        let w = clean(word);
+        if w.ends_with("вна") || w.ends_with("чна") || w.ends_with("шна") {
+            return Gender::Female;
+        }
+        if w.ends_with("вич") || w.ends_with("ич") || w.ends_with("ыч") {
+            return Gender::Male;
+        }
+    }
+    // Fallback: given name (second word in "Surname Given Patronymic").
+    let words: Vec<&str> = full_name.split_whitespace().collect();
+    let candidate = match words.len() {
+        0 => return Gender::Male,
+        1 => words[0],
+        _ => words[1],
+    };
+    if let Some(last) = clean(candidate).chars().last() {
+        if last == 'а' || last == 'я' {
+            return Gender::Female;
+        }
+    }
+    Gender::Male
+}
+
+/// Keep only the year out of an FB2/INPX date field (e.g. "1999", "1999-06-10",
+/// "10.06.1999" → "1999"). Returns the first standalone 4-digit 1000..=2100 run.
+fn extract_year(docdate: &str) -> String {
+    let bytes = docdate.as_bytes();
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        if bytes[i..i + 4].iter().all(u8::is_ascii_digit) {
+            let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+            let after_ok = i + 4 == bytes.len() || !bytes[i + 4].is_ascii_digit();
+            if before_ok && after_ok {
+                if let Ok(y) = docdate[i..i + 4].parse::<u32>() {
+                    if (1000..=2100).contains(&y) {
+                        return y.to_string();
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    docdate.trim().to_string()
+}
+
 fn format_emoji(format: &str) -> &'static str {
     match format.to_ascii_lowercase().as_str() {
         "fb2" => "📄",
@@ -483,4 +560,33 @@ fn strip_html(value: &str) -> String {
         .unwrap()
         .replace_all(value, "")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gender_from_patronymic() {
+        assert_eq!(author_gender("Пелевин Виктор Олегович"), Gender::Male);
+        assert_eq!(author_gender("Иванов Иван Иванович"), Gender::Male);
+        assert_eq!(author_gender("Ахматова Анна Андреевна"), Gender::Female);
+        assert_eq!(author_gender("Толстая Татьяна Никитична"), Gender::Female);
+    }
+
+    #[test]
+    fn gender_fallback_by_given_name() {
+        assert_eq!(author_gender("Ахматова Анна"), Gender::Female);
+        assert_eq!(author_gender("Пелевин Виктор"), Gender::Male);
+        assert_eq!(author_gender("Unknown"), Gender::Male);
+    }
+
+    #[test]
+    fn year_extraction() {
+        assert_eq!(extract_year("1999"), "1999");
+        assert_eq!(extract_year("1999-06-10"), "1999");
+        assert_eq!(extract_year("10.06.1999"), "1999");
+        assert_eq!(extract_year(""), "");
+        assert_eq!(extract_year("нет данных"), "нет данных");
+    }
 }
