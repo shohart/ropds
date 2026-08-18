@@ -145,20 +145,26 @@ async fn send_book_card(
         .collect::<Vec<_>>()
         .join(", ");
 
-    // Format buttons stacked vertically — one per row, readable on narrow screens.
-    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    rows.push(vec![InlineKeyboardButton::callback(
-        format!("📄 Скачать {}", book.format.to_uppercase()),
+    // Format buttons in a two-column grid — format name + characteristic emoji.
+    let mut buttons: Vec<InlineKeyboardButton> = Vec::new();
+    buttons.push(InlineKeyboardButton::callback(
+        format!(
+            "{} {}",
+            format_emoji(&book.format),
+            book.format.to_uppercase()
+        ),
         format!("get:{id}:orig"),
-    )]);
+    ));
     if book.format == "fb2" && config.convert.enabled {
         for format in &config.convert.formats {
-            rows.push(vec![InlineKeyboardButton::callback(
-                format!("⬇️ Скачать {}", format.to_uppercase()),
+            buttons.push(InlineKeyboardButton::callback(
+                format!("{} {}", format_emoji(format), format.to_uppercase()),
                 format!("get:{id}:{format}"),
-            )]);
+            ));
         }
     }
+    let rows: Vec<Vec<InlineKeyboardButton>> =
+        buttons.chunks(2).map(|chunk| chunk.to_vec()).collect();
 
     let annotation = strip_html(&book.annotation);
     let text = format!(
@@ -416,6 +422,22 @@ fn truncate_chars(value: &str, max: usize) -> String {
         let mut out: String = value.chars().take(max).collect();
         out.push('…');
         out
+    }
+}
+
+fn format_emoji(format: &str) -> &'static str {
+    match format.to_ascii_lowercase().as_str() {
+        "fb2" => "📄",
+        "epub" => "📕",
+        "mobi" => "📘",
+        "azw3" | "kfx" => "📙",
+        "kepub" => "📗",
+        "pdf" => "🧾",
+        "txt" => "📝",
+        "djvu" => "📚",
+        "docx" => "📃",
+        "zip" => "🗜️",
+        _ => "⬇️",
     }
 }
 
