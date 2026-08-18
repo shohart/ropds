@@ -11,7 +11,9 @@ root_path = "/path/to/books"
 book_extensions = ["fb2", "epub", "mobi", "pdf", "djvu", "zip"]
 scan_zip = true
 zip_codepage = "cp866"
-inpx_enable = false
+inpx_enable = true
+inpx_enrich = true             # false = fast metadata-only import for huge libraries
+inpx_additional_zip_pattern = "" # e.g. "^f\\.fb2\\." for daily archives beside INPX
 
 [covers]
 covers_path = "/path/to/books/covers"

@@ -66,6 +66,12 @@ pub struct LibraryConfig {
     pub zip_codepage: String,
     #[serde(default)]
     pub inpx_enable: bool,
+    /// Enrich INPX metadata by opening every referenced book (expensive for huge libraries).
+    #[serde(default = "default_true")]
+    pub inpx_enrich: bool,
+    /// Regex for extra ZIP archives to scan beside an INPX index (e.g. daily updates).
+    #[serde(default)]
+    pub inpx_additional_zip_pattern: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

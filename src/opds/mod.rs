@@ -90,6 +90,8 @@ mod tests {
                 scan_zip: true,
                 zip_codepage: "cp866".to_string(),
                 inpx_enable: false,
+                inpx_enrich: true,
+                inpx_additional_zip_pattern: String::new(),
             },
             covers: CoversConfig {
                 covers_path: PathBuf::from("/tmp/covers"),

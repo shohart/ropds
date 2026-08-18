@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use dashmap::{DashMap, DashSet};
+use regex::Regex;
 use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
@@ -159,6 +160,7 @@ struct ScanContext {
     skip_unchanged: bool,
     test_zip: bool,
     test_files: bool,
+    inpx_enrich: bool,
     // Caches (reduces DB round-trips under parallelism)
     catalog_cache: DashMap<String, i64>,
     author_cache: DashMap<String, i64>,
@@ -239,6 +241,7 @@ async fn do_scan(
         .collect();
     let scan_zip = config.library.scan_zip;
     let inpx_enable = config.library.inpx_enable;
+    let inpx_additional_zip_pattern = config.library.inpx_additional_zip_pattern.clone();
     let workers_num = config.scanner.workers_num;
 
     info!("Starting library scan: {}", root.display());
@@ -261,7 +264,13 @@ async fn do_scan(
     let root_path = root.clone();
     let extensions_clone = extensions.clone();
     let walk_result = tokio::task::spawn_blocking(move || {
-        collect_entries(&root_path, &extensions_clone, scan_zip, inpx_enable)
+        collect_entries(
+            &root_path,
+            &extensions_clone,
+            scan_zip,
+            inpx_enable,
+            &inpx_additional_zip_pattern,
+        )
     })
     .await
     .map_err(|e| ScanError::Internal(e.to_string()))?;
@@ -285,6 +294,7 @@ async fn do_scan(
         skip_unchanged: config.scanner.skip_unchanged,
         test_zip: config.scanner.test_zip,
         test_files: config.scanner.test_files,
+        inpx_enrich: config.library.inpx_enrich,
         catalog_cache: DashMap::new(),
         author_cache: DashMap::new(),
         genre_cache: DashMap::new(),
@@ -458,7 +468,16 @@ fn collect_entries(
     extensions: &HashSet<String>,
     scan_zip: bool,
     inpx_enable: bool,
+    inpx_additional_zip_pattern: &str,
 ) -> Result<Vec<ScanEntry>, ScanError> {
+    let additional_zip_re = if inpx_additional_zip_pattern.trim().is_empty() {
+        None
+    } else {
+        Some(
+            Regex::new(inpx_additional_zip_pattern)
+                .map_err(|e| ScanError::Internal(e.to_string()))?,
+        )
+    };
     let mut entries = Vec::new();
     let mut inpx_dirs: HashSet<PathBuf> = HashSet::new();
 
@@ -502,16 +521,22 @@ fn collect_entries(
         if !entry.file_type().is_file() {
             continue;
         }
-        if let Some(parent) = entry.path().parent()
-            && inpx_dirs.contains(parent)
-        {
-            continue; // Skip files in INPX directories
-        }
-
         let ext = match entry.path().extension() {
             Some(e) => e.to_string_lossy().to_lowercase(),
             None => continue,
         };
+
+        if let Some(parent) = entry.path().parent()
+            && inpx_dirs.contains(parent)
+        {
+            let is_allowed_extra_zip = ext == "zip"
+                && additional_zip_re
+                    .as_ref()
+                    .is_some_and(|re| re.is_match(&entry.file_name().to_string_lossy()));
+            if !is_allowed_extra_zip {
+                continue;
+            }
+        }
 
         if ext == "zip" && scan_zip {
             let rel = rel_path(root, entry.path().parent().unwrap_or(entry.path()));

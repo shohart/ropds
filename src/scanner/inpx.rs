@@ -147,7 +147,9 @@ async fn process_inpx_zip_group(
     // Best-effort metadata enrichment from referenced ZIP entries.
     let needed_filenames: HashSet<String> = pending.iter().map(|r| r.filename.clone()).collect();
     let zip_abs_path = ctx.root.join(book_path);
-    let mut parsed_meta = if !zip_abs_path.exists() {
+    let mut parsed_meta = if !ctx.inpx_enrich {
+        HashMap::new()
+    } else if !zip_abs_path.exists() {
         warn!(
             "INPX referenced ZIP archive is missing: {}",
             zip_abs_path.display()
