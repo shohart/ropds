@@ -326,6 +326,28 @@ txt  = "fbc convert --to txt --output-file \"{output}\" \"{input}\""
 
 `GET /opds/convert/{book_id}/{format}/` (например `/opds/convert/42/azw3/`)
 
+## Автопополнение из Флибусты
+
+ROPDS нативно получает список ежедневных FB2-архивов, скачивает их в скрытый
+staging, проверяет ZIP, атомарно публикует весь набор и запускает scanner только
+при наличии новых архивов. Включается секцией `[flibusta]`. Для загрузчика
+поддерживаются HTTP(S), SOCKS5 и SOCKS5h proxy. Безопасная ручная проверка:
+
+```bash
+ropds --config config.toml --update-dry-run
+ropds --config config.toml --update
+```
+
+Есть retry, same-host policy, лимиты размера и свободного места, lock и state
+JSON в `<library>/.ropds-control/`. Scanner игнорирует скрытые каталоги.
+
+## Telegram-бот
+
+Встроенный Rust-бот включается через `telegram.enabled=true` и `telegram.token`.
+Он ищет по названию или автору, показывает форматированные карточки и отправляет
+оригинал либо сконвертированный файл. Доступ ограничивается
+`allowed_usernames`; `telegram.proxy_url` поддерживает HTTP(S), SOCKS5/SOCKS5h.
+
 ## База данных
 
 SQLite используется по умолчанию и не требует никакой настройки. PostgreSQL и MySQL/MariaDB тоже поддерживаются — достаточно указать URL в `[database].url`.

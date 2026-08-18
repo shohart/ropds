@@ -464,7 +464,14 @@ fn collect_entries(
 
     // First pass: find directories containing INPX files
     if inpx_enable {
-        for entry in WalkDir::new(root).follow_links(true).into_iter().flatten() {
+        for entry in WalkDir::new(root)
+            .follow_links(true)
+            .into_iter()
+            .filter_entry(|entry| {
+                entry.depth() == 0 || !entry.file_name().to_string_lossy().starts_with('.')
+            })
+            .flatten()
+        {
             if entry.file_type().is_file()
                 && let Some(ext) = entry.path().extension()
                 && ext.to_string_lossy().eq_ignore_ascii_case("inpx")
@@ -484,7 +491,14 @@ fn collect_entries(
     }
 
     // Second pass: collect regular files and ZIPs (skip INPX directories)
-    for entry in WalkDir::new(root).follow_links(true).into_iter().flatten() {
+    for entry in WalkDir::new(root)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0 || !entry.file_name().to_string_lossy().starts_with('.')
+        })
+        .flatten()
+    {
         if !entry.file_type().is_file() {
             continue;
         }

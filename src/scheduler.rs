@@ -4,7 +4,7 @@ use tracing::{info, warn};
 
 use crate::config::{Config, ScannerConfig};
 use crate::db::DbPool;
-use crate::scanner;
+use crate::{flibusta, scanner};
 
 /// Validate scanner schedule config values at startup.
 pub fn validate_config(config: &ScannerConfig) -> Result<(), String> {
@@ -119,6 +119,41 @@ pub async fn run(pool: DbPool, config: Config) {
                     Err(e) => {
                         warn!("Scheduled scan failed: {e}");
                     }
+                }
+            });
+        }
+
+        if config.flibusta.enabled && flibusta::should_run_now(&config.flibusta, Local::now()) {
+            info!("Scheduled Flibusta update triggered");
+            let pool = pool.clone();
+            let update_config = config.clone();
+            tokio::spawn(async move {
+                match flibusta::run(&update_config, false, false).await {
+                    Ok(result) => {
+                        info!(
+                            "Flibusta update finished: discovered={}, existing={}, downloaded={}, bytes={}",
+                            result.discovered,
+                            result.existing,
+                            result.downloaded,
+                            result.downloaded_bytes
+                        );
+                        if result.downloaded > 0 && update_config.flibusta.scan_after_update {
+                            match scanner::run_scan(&pool, &update_config, false).await {
+                                Ok(stats) => info!(
+                                    "Post-update scan finished: added={}, skipped={}, errors={}",
+                                    stats.books_added, stats.books_skipped, stats.errors
+                                ),
+                                Err(scanner::ScanError::AlreadyRunning) => {
+                                    warn!("Post-update scan skipped: scan already running")
+                                }
+                                Err(e) => warn!("Post-update scan failed: {e}"),
+                            }
+                        }
+                    }
+                    Err(flibusta::UpdateError::AlreadyRunning) => {
+                        warn!("Flibusta update skipped: already running")
+                    }
+                    Err(e) => warn!("Flibusta update failed: {e}"),
                 }
             });
         }

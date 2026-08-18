@@ -36,6 +36,14 @@ struct Cli {
     /// Refuses if user data exists without matching sqlx migration metadata.
     #[arg(long)]
     init_db: bool,
+
+    /// Run a one-shot Flibusta update and exit (ignores flibusta.enabled)
+    #[arg(long)]
+    update: bool,
+
+    /// Discover missing Flibusta archives without downloading
+    #[arg(long)]
+    update_dry_run: bool,
 }
 
 #[tokio::main]
@@ -200,6 +208,34 @@ async fn main() {
         );
     }
 
+    // One-shot Flibusta update / dry-run mode
+    if cli.update || cli.update_dry_run {
+        match ropds::flibusta::run(&config, cli.update_dry_run, true).await {
+            Ok(result) => {
+                tracing::info!(
+                    "Flibusta update: discovered={}, existing={}, downloaded={}, bytes={}, dry_run={}",
+                    result.discovered,
+                    result.existing,
+                    result.downloaded,
+                    result.downloaded_bytes,
+                    result.dry_run
+                );
+                if cli.update && result.downloaded > 0 && config.flibusta.scan_after_update {
+                    tracing::info!("Running post-update scan...");
+                    if let Err(e) = ropds::scanner::run_scan(&pool, &config, false).await {
+                        tracing::error!("Post-update scan failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::error!("Flibusta update failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // One-shot scan mode
     if cli.scan {
         tracing::info!("Running one-shot scan...");
@@ -279,8 +315,13 @@ async fn main() {
     tracing::info!("Library root: {}", config.library.root_path.display());
     tracing::info!("Listening on {addr}");
 
-    // Start background scan scheduler
+    // Start background scan/update scheduler
     tokio::spawn(ropds::scheduler::run(pool.clone(), config.clone()));
+
+    // Start Telegram bot in the same runtime when enabled.
+    if config.telegram.enabled {
+        tokio::spawn(ropds::telegram::run(pool.clone(), config.clone()));
+    }
 
     let state = AppState::new(
         config,

@@ -89,6 +89,30 @@ from     = ""
 send_to  = ["admin@example.com"]
 starttls = true
 
+[flibusta]
+enabled = false
+source_url = "http://flibusta.is/daily/"
+destination = ""               # empty = library.root_path
+file_pattern = "^f\\.fb2\\.[A-Za-z0-9._-]+\\.zip$"
+proxy_url = ""                 # http(s)://, socks5://, socks5h://; empty = direct
+timeout_secs = 120
+retries = 3
+validate_zip = true
+scan_after_update = true
+schedule_minutes = [0]
+schedule_hours = [2]
+schedule_day_of_week = []
+max_file_size_mb = 2048
+max_total_size_mb = 10240
+min_free_space_mb = 2048
+
+[telegram]
+enabled = false
+token = ""
+proxy_url = ""                 # http(s)://, socks5://, socks5h://; empty = direct
+allowed_usernames = []
+max_results = 10
+
 [convert]
 enabled = false                 # Enable on-the-fly FB2 → <formats> conversion
 temp_dir = "/tmp/ropds-convert" # Temp directory for converter input/output files

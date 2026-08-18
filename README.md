@@ -327,6 +327,30 @@ as an acquisition link:
 
 `GET /opds/convert/{book_id}/{format}/` (e.g. `/opds/convert/42/azw3/`)
 
+## Automatic Flibusta updates
+
+ROPDS can natively discover and download daily FB2 archives, validate every ZIP
+before publishing, atomically move the complete batch into the library, and run
+a scan only when new archives were added. Enable `[flibusta]` in
+`config.toml.example`; HTTP(S), SOCKS5 and SOCKS5h proxies are supported via
+`flibusta.proxy_url`. Manual safe check:
+
+```bash
+ropds --config config.toml --update-dry-run
+ropds --config config.toml --update
+```
+
+Downloads use hidden staging, same-host link filtering, retries, file/batch size
+limits, a free-space reserve, an exclusive lock and JSON state under
+`<library>/.ropds-control/`. Scanner traversal ignores hidden directories.
+
+## Telegram bot
+
+Set `telegram.enabled=true` and `telegram.token`. The built-in Rust bot searches
+by title or author, shows formatted book cards and sends original or converted
+formats. Restrict access with `allowed_usernames`. `telegram.proxy_url` supports
+HTTP(S), SOCKS5 and SOCKS5h; an empty value forces a direct connection.
+
 ## Database
 
 SQLite is the default and simplest option — no setup needed. PostgreSQL and MySQL/MariaDB are also supported via `[database].url`.

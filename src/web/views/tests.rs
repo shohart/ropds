@@ -78,6 +78,8 @@ mod tests {
             oauth: Default::default(),
             smtp: Default::default(),
             convert: Default::default(),
+            flibusta: Default::default(),
+            telegram: Default::default(),
         };
 
         let db = create_test_pool().await;

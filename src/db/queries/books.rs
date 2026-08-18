@@ -5,6 +5,28 @@ use crate::db::{DbBackend, DbPool};
 
 use crate::db::models::{AvailStatus, Book, CatType};
 
+/// Search available books by title or author for compact external clients.
+pub async fn search_title_or_author(
+    pool: &DbPool,
+    term: &str,
+    limit: i64,
+) -> Result<Vec<Book>, sqlx::Error> {
+    let pattern = format!("%{}%", term.to_uppercase());
+    let sql = pool.sql(
+        "SELECT DISTINCT b.* FROM books b \
+         LEFT JOIN book_authors ba ON ba.book_id = b.id \
+         LEFT JOIN authors a ON a.id = ba.author_id \
+         WHERE b.avail > 0 AND (b.search_title LIKE ? OR a.search_full_name LIKE ?) \
+         ORDER BY b.search_title LIMIT ?",
+    );
+    sqlx::query_as::<_, Book>(&sql)
+        .bind(&pattern)
+        .bind(&pattern)
+        .bind(limit)
+        .fetch_all(pool.inner())
+        .await
+}
+
 pub async fn get_by_id(pool: &DbPool, id: i64) -> Result<Option<Book>, sqlx::Error> {
     let sql = pool.sql("SELECT * FROM books WHERE id = ?");
     sqlx::query_as::<_, Book>(&sql)

@@ -24,6 +24,10 @@ pub struct Config {
     pub smtp: SmtpConfig,
     #[serde(default)]
     pub convert: ConvertConfig,
+    #[serde(default)]
+    pub flibusta: FlibustaConfig,
+    #[serde(default)]
+    pub telegram: TelegramConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -399,6 +403,70 @@ impl Default for ConvertConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct FlibustaConfig {
+    pub enabled: bool,
+    pub source_url: String,
+    pub destination: PathBuf,
+    pub file_pattern: String,
+    pub proxy_url: String,
+    pub timeout_secs: u64,
+    pub retries: u32,
+    pub validate_zip: bool,
+    pub scan_after_update: bool,
+    pub schedule_minutes: Vec<u32>,
+    pub schedule_hours: Vec<u32>,
+    pub schedule_day_of_week: Vec<u32>,
+    pub max_file_size_mb: u64,
+    pub max_total_size_mb: u64,
+    pub min_free_space_mb: u64,
+}
+
+impl Default for FlibustaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            source_url: "http://flibusta.is/daily/".to_string(),
+            destination: PathBuf::new(),
+            file_pattern: r"^f\.fb2\.[A-Za-z0-9._-]+\.zip$".to_string(),
+            proxy_url: String::new(),
+            timeout_secs: 120,
+            retries: 3,
+            validate_zip: true,
+            scan_after_update: true,
+            schedule_minutes: vec![0],
+            schedule_hours: vec![2],
+            schedule_day_of_week: Vec::new(),
+            max_file_size_mb: 2048,
+            max_total_size_mb: 10240,
+            min_free_space_mb: 2048,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct TelegramConfig {
+    pub enabled: bool,
+    pub token: String,
+    pub proxy_url: String,
+    pub allowed_usernames: Vec<String>,
+    pub max_results: u32,
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token: String::new(),
+            proxy_url: String::new(),
+            allowed_usernames: Vec::new(),
+            max_results: 10,
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path).map_err(|e| ConfigError::ReadFile {
@@ -462,6 +530,39 @@ impl Config {
             ));
         }
 
+        if self.telegram.enabled && self.telegram.token.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "telegram.enabled=true requires telegram.token".to_string(),
+            ));
+        }
+        validate_proxy_url("telegram.proxy_url", &self.telegram.proxy_url)?;
+        validate_proxy_url("flibusta.proxy_url", &self.flibusta.proxy_url)?;
+        validate_schedule(
+            "flibusta",
+            &self.flibusta.schedule_minutes,
+            &self.flibusta.schedule_hours,
+            &self.flibusta.schedule_day_of_week,
+        )?;
+        if self.flibusta.enabled {
+            let source = reqwest::Url::parse(&self.flibusta.source_url).map_err(|e| {
+                ConfigError::Validation(format!("invalid flibusta.source_url: {e}"))
+            })?;
+            if !matches!(source.scheme(), "http" | "https") || source.host_str().is_none() {
+                return Err(ConfigError::Validation(
+                    "flibusta.source_url must be an absolute HTTP(S) URL".to_string(),
+                ));
+            }
+            if self.flibusta.retries == 0
+                || self.flibusta.timeout_secs == 0
+                || self.flibusta.max_file_size_mb == 0
+                || self.flibusta.max_total_size_mb == 0
+            {
+                return Err(ConfigError::Validation(
+                    "Flibusta retry/timeout/size values must be greater than zero".to_string(),
+                ));
+            }
+        }
+
         if self.oauth.notify_admin_email {
             if self.smtp.host.trim().is_empty() {
                 return Err(ConfigError::Validation(
@@ -500,6 +601,37 @@ impl Config {
 
         Ok(())
     }
+}
+
+fn validate_proxy_url(name: &str, value: &str) -> Result<(), ConfigError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+    let url = reqwest::Url::parse(value)
+        .map_err(|e| ConfigError::Validation(format!("invalid {name}: {e}")))?;
+    if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h") || url.host_str().is_none()
+    {
+        return Err(ConfigError::Validation(format!(
+            "{name} must use http, https, socks5, or socks5h and include a host"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_schedule(
+    name: &str,
+    minutes: &[u32],
+    hours: &[u32],
+    days: &[u32],
+) -> Result<(), ConfigError> {
+    if minutes.iter().any(|&v| v > 59)
+        || hours.iter().any(|&v| v > 23)
+        || days.iter().any(|&v| !(1..=7).contains(&v))
+    {
+        return Err(ConfigError::Validation(format!("invalid {name} schedule")));
+    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]

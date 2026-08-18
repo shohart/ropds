@@ -76,6 +76,8 @@ mod tests {
             oauth: Default::default(),
             smtp: Default::default(),
             convert: Default::default(),
+            flibusta: Default::default(),
+            telegram: Default::default(),
         };
 
         let tera = tera::Tera::default();
