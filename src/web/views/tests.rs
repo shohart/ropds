@@ -77,6 +77,7 @@ mod tests {
             reader: ReaderConfig::default(),
             oauth: Default::default(),
             smtp: Default::default(),
+            convert: Default::default(),
         };
 
         let db = create_test_pool().await;

@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod convert;
 pub mod covers;
 pub mod download;
 pub mod v1;
@@ -42,6 +43,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(v2::router())
         // Download
         .route("/download/{book_id}/{zip_flag}/", get(download::download))
+        // On-the-fly conversion (FB2 → EPUB/MOBI)
+        .route("/convert/{book_id}/{format}/", get(convert::convert))
         // Auth middleware
         .layer(middleware::from_fn_with_state(
             state,
@@ -131,6 +134,7 @@ mod tests {
             reader: ReaderConfig::default(),
             oauth: Default::default(),
             smtp: Default::default(),
+            convert: Default::default(),
         };
 
         let db = create_test_pool().await;

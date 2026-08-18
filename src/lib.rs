@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod config;
+pub mod convert;
 pub mod db;
 pub mod djvu;
 pub mod email;

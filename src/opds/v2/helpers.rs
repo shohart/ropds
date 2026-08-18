@@ -192,6 +192,23 @@ pub async fn book_publication(state: &AppState, book: &Book, lang: &str) -> Valu
         }));
     }
 
+    if book.format == "fb2" && state.config.convert.enabled {
+        if !state.config.convert.fb2_to_epub.trim().is_empty() {
+            links.push(json!({
+                "rel": REL_ACQUISITION,
+                "href": format!("/opds/convert/{}/epub/", book.id),
+                "type": super::super::v1::xml::mime_for_format("epub")
+            }));
+        }
+        if !state.config.convert.fb2_to_mobi.trim().is_empty() {
+            links.push(json!({
+                "rel": REL_ACQUISITION,
+                "href": format!("/opds/convert/{}/mobi/", book.id),
+                "type": super::super::v1::xml::mime_for_format("mobi")
+            }));
+        }
+    }
+
     let mut images = Vec::new();
     if book.cover != 0 {
         images.push(json!({

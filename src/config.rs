@@ -21,6 +21,8 @@ pub struct Config {
     pub oauth: OauthConfig,
     #[serde(default)]
     pub smtp: SmtpConfig,
+    #[serde(default)]
+    pub convert: ConvertConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -334,6 +336,39 @@ impl Default for SmtpConfig {
     }
 }
 
+/// On-the-fly book conversion (FB2 → EPUB / MOBI).
+///
+/// Conversion shells out to an external converter (e.g. Calibre's
+/// `ebook-convert`, or the legacy `fb2conv.py` / `fb2epub` scripts used by
+/// SOPDS). Each command template supports `{input}` and `{output}`
+/// placeholders, which are substituted with shell-quoted absolute paths.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct ConvertConfig {
+    /// Master switch for on-the-fly conversion.
+    pub enabled: bool,
+    /// Directory for temporary input/output files during conversion.
+    pub temp_dir: PathBuf,
+    /// Timeout for a single conversion, in seconds.
+    pub timeout_secs: u64,
+    /// Shell command template for FB2 → EPUB.
+    pub fb2_to_epub: String,
+    /// Shell command template for FB2 → MOBI.
+    pub fb2_to_mobi: String,
+}
+
+impl Default for ConvertConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            temp_dir: default_convert_temp_dir(),
+            timeout_secs: default_convert_timeout_secs(),
+            fb2_to_epub: default_fb2_to_epub(),
+            fb2_to_mobi: default_fb2_to_mobi(),
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path).map_err(|e| ConfigError::ReadFile {
@@ -579,6 +614,22 @@ fn default_role_admin() -> String {
 
 fn default_keycloak_button_label() -> String {
     "Company SSO".to_string()
+}
+
+fn default_convert_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("ropds-convert")
+}
+
+fn default_convert_timeout_secs() -> u64 {
+    300
+}
+
+fn default_fb2_to_epub() -> String {
+    "ebook-convert \"{input}\" \"{output}\"".to_string()
+}
+
+fn default_fb2_to_mobi() -> String {
+    "ebook-convert \"{input}\" \"{output}\"".to_string()
 }
 
 #[cfg(test)]

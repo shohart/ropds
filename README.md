@@ -292,6 +292,33 @@ Nginx and Traefik snippets:
 
 Books inside **ZIP archives** are scanned transparently. **INPX** index files are supported as an alternative to scanning individual archives.
 
+## On-the-fly conversion (FB2 → EPUB / MOBI)
+
+FB2 books can be converted to EPUB or MOBI on demand, mirroring the classic
+SOPDS behaviour. Conversion is **disabled by default** and controlled entirely
+by the `[convert]` config section:
+
+```toml
+[convert]
+enabled = true
+temp_dir = "/tmp/ropds-convert"
+timeout_secs = 300
+fb2_to_epub = "ebook-convert \"{input}\" \"{output}\""
+fb2_to_mobi = "ebook-convert \"{input}\" \"{output}\""
+```
+
+Each command template supports `{input}` and `{output}` placeholders, replaced
+with shell-quoted absolute paths. The default uses Calibre's `ebook-convert`,
+but any converter script works — e.g. the legacy SOPDS `fb2conv.py` / `fb2epub`
+helpers.
+
+When enabled, FB2 entries expose two extra acquisition links:
+
+- `GET /opds/convert/{book_id}/epub/`
+- `GET /opds/convert/{book_id}/mobi/`
+
+Set either command to an empty string to hide that format.
+
 ## Database
 
 SQLite is the default and simplest option — no setup needed. PostgreSQL and MySQL/MariaDB are also supported via `[database].url`.

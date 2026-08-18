@@ -75,6 +75,7 @@ mod tests {
             reader: ReaderConfig::default(),
             oauth: Default::default(),
             smtp: Default::default(),
+            convert: Default::default(),
         };
 
         let tera = tera::Tera::default();
