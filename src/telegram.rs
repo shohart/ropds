@@ -263,7 +263,7 @@ async fn build_search_message(
             second_line,
         ));
         number_buttons.push(InlineKeyboardButton::callback(
-            number.to_string(),
+            bold_digits(number),
             format!("card:{}", book.id),
         ));
     }
@@ -532,6 +532,16 @@ fn extract_year(docdate: &str) -> String {
     docdate.trim().to_string()
 }
 
+/// Render a number with mathematical-bold digits for button labels, where Telegram
+/// inline-button text cannot carry HTML `<b>` formatting.
+fn bold_digits(n: usize) -> String {
+    const BOLD: [char; 10] = ['𝟎', '𝟏', '𝟐', '𝟑', '𝟒', '𝟓', '𝟔', '𝟕', '𝟖', '𝟗'];
+    n.to_string()
+        .chars()
+        .map(|c| c.to_digit(10).map_or(c, |d| BOLD[d as usize]))
+        .collect()
+}
+
 fn format_emoji(format: &str) -> &'static str {
     match format.to_ascii_lowercase().as_str() {
         "fb2" => "📄",
@@ -588,5 +598,12 @@ mod tests {
         assert_eq!(extract_year("10.06.1999"), "1999");
         assert_eq!(extract_year(""), "");
         assert_eq!(extract_year("нет данных"), "нет данных");
+    }
+
+    #[test]
+    fn bold_digit_rendering() {
+        assert_eq!(bold_digits(1), "𝟏");
+        assert_eq!(bold_digits(10), "𝟏𝟎");
+        assert_eq!(bold_digits(47), "𝟒𝟕");
     }
 }
