@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::db::DbPool;
-use crate::db::queries::{authors, books};
+use crate::db::queries::{authors, books, counters};
 
 /// In-memory pagination state for search results, keyed by chat.
 #[derive(Clone)]
@@ -74,14 +74,10 @@ async fn handle_message(
         return Ok(());
     };
     if text == "/start" || text == "/help" {
-        bot.send_message(
-            msg.chat.id,
-            "📚 <b>ROPDS — домашняя библиотека</b>\n\n\
-             🔎 Отправьте часть названия книги или имя автора.\n\
-             👆 Нажмите на книгу в списке и выберите формат.",
-        )
-        .parse_mode(ParseMode::Html)
-        .await?;
+        let summary = build_library_summary(&pool).await;
+        bot.send_message(msg.chat.id, summary)
+            .parse_mode(ParseMode::Html)
+            .await?;
         return Ok(());
     }
     if text.chars().count() < 3 {
@@ -218,11 +214,6 @@ async fn build_search_message(
     let mut lines: Vec<String> = Vec::new();
     let mut number_buttons: Vec<InlineKeyboardButton> = Vec::new();
 
-    // Per-page caches so the same author keeps one emoji, and different authors cycle.
-    let mut author_emoji_cache: HashMap<String, String> = HashMap::new();
-    let mut male_idx = 0usize;
-    let mut female_idx = 0usize;
-
     for (i, book) in book_list.iter().enumerate() {
         let number = start_index + i + 1;
         let book_emoji = BOOK_EMOJIS[i % BOOK_EMOJIS.len()];
@@ -236,24 +227,10 @@ async fn build_search_message(
         } else {
             author_names.join(", ")
         };
-        let primary = author_names.first().map(String::as_str).unwrap_or("");
-
-        let author_emoji = if let Some(e) = author_emoji_cache.get(primary) {
-            e.clone()
-        } else {
-            let (palette, counter) = match author_gender(primary) {
-                Gender::Female => (FEMALE_EMOJIS.as_slice(), &mut female_idx),
-                Gender::Male => (MALE_EMOJIS.as_slice(), &mut male_idx),
-            };
-            let e = palette[*counter % palette.len()].to_string();
-            *counter += 1;
-            author_emoji_cache.insert(primary.to_string(), e.clone());
-            e
-        };
 
         let year = extract_year(&book.docdate);
         let indent = author_line_indent(number);
-        let mut second_line = format!("{indent}{author_emoji} {}", escape_html(&author_display));
+        let mut second_line = format!("{indent}{}", escape_html(&author_display));
         if !year.is_empty() {
             second_line.push_str(&format!(", {year}"));
         }
@@ -472,45 +449,6 @@ fn page_count(total: i64, page_size: i64) -> usize {
 
 const BOOK_EMOJIS: [&str; 10] = ["📕", "📗", "📘", "📙", "📒", "📔", "📓", "📚", "📖", "🔖"];
 
-const MALE_EMOJIS: [&str; 7] = ["👨", "🧔", "👱‍♂️", "👨‍🦱", "👨‍🦰", "👨‍🦳", "👴"];
-
-const FEMALE_EMOJIS: [&str; 7] = ["👩", "👱‍♀️", "👩‍🦱", "👩‍🦰", "👩‍🦳", "👵", "🧕"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Gender {
-    Male,
-    Female,
-}
-
-/// Cheap Russian author gender heuristic: patronymic suffix is decisive
-/// (`-вич/-ич` male, `-вна/-чна/-шна` female), otherwise the given name's
-/// last letter (`а`/`я` → female). Approximate by design — it only picks an emoji.
-fn author_gender(full_name: &str) -> Gender {
-    let clean = |w: &str| w.trim_matches(|c: char| !c.is_alphabetic()).to_lowercase();
-    for word in full_name.split_whitespace() {
-        let w = clean(word);
-        if w.ends_with("вна") || w.ends_with("чна") || w.ends_with("шна") {
-            return Gender::Female;
-        }
-        if w.ends_with("вич") || w.ends_with("ич") || w.ends_with("ыч") {
-            return Gender::Male;
-        }
-    }
-    // Fallback: given name (second word in "Surname Given Patronymic").
-    let words: Vec<&str> = full_name.split_whitespace().collect();
-    let candidate = match words.len() {
-        0 => return Gender::Male,
-        1 => words[0],
-        _ => words[1],
-    };
-    if let Some(last) = clean(candidate).chars().last() {
-        if last == 'а' || last == 'я' {
-            return Gender::Female;
-        }
-    }
-    Gender::Male
-}
-
 /// Keep only the year out of an FB2/INPX date field (e.g. "1999", "1999-06-10",
 /// "10.06.1999" → "1999"). Returns the first standalone 4-digit 1000..=2100 run.
 fn extract_year(docdate: &str) -> String {
@@ -543,13 +481,11 @@ fn bold_digits(n: usize) -> String {
         .collect()
 }
 
-/// Spaces to pad the author line so its emoji sits directly under the book emoji.
-/// The book emoji is preceded by `"{number}. "` (e.g. "1. ", "47. ", "100. "), so the
-/// indent grows with the number of digits — handles multi-digit result numbers.
-/// A single extra space compensates for bold digits and emoji being slightly wider
-/// than regular glyphs in Telegram's proportional font.
+/// Spaces to pad the author line so the author starts under the book title:
+/// after the `"{number}. "` prefix and the book emoji (renders ~2 columns wide)
+/// plus one space.
 fn author_line_indent(number: usize) -> String {
-    " ".repeat(format!("{number}. ").chars().count() + 1)
+    " ".repeat(format!("{number}. ").chars().count() + 3)
 }
 
 fn format_emoji(format: &str) -> &'static str {
@@ -582,24 +518,84 @@ fn strip_html(value: &str) -> String {
         .to_string()
 }
 
+/// Build the `/start` welcome summary: total books/authors/series and the last
+/// library update time (most recent `reg_date` of an available book).
+async fn build_library_summary(pool: &DbPool) -> String {
+    let counters_list = counters::get_all(pool).await.unwrap_or_default();
+    let get = |name: &str| {
+        counters_list
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.value)
+            .unwrap_or(0)
+    };
+    let books = get("allbooks");
+    let authors = get("allauthors");
+    let series = get("allseries");
+
+    let last_update = {
+        let sql = pool.sql("SELECT MAX(reg_date) FROM books WHERE avail > 0");
+        let row: (Option<String>,) = sqlx::query_as(&sql)
+            .fetch_one(pool.inner())
+            .await
+            .unwrap_or((None,));
+        row.0.unwrap_or_default()
+    };
+
+    format!(
+        "📚 <b>ROPDS — домашняя библиотека</b>\n\n\
+         📖 Книг: <b>{}</b>\n\
+         ✍️ Авторов: <b>{}</b>\n\
+         📚 Серий: <b>{}</b>\n\
+         🕒 Последнее пополнение: {}\n\n\
+         🔎 Отправьте часть названия книги или имя автора.\n\
+         👆 Нажмите на книгу в списке и выберите формат.",
+        fmt_thousands(books),
+        fmt_thousands(authors),
+        fmt_thousands(series),
+        fmt_last_update(&last_update),
+    )
+}
+
+/// Format an integer with space thousands separators (e.g. 587541 → "587 541").
+fn fmt_thousands(n: i64) -> String {
+    let s = n.to_string();
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            out.push(' ');
+        }
+        out.push(*c);
+    }
+    out
+}
+
+/// Format a `reg_date`/RFC3339 timestamp as "DD.MM.YYYY HH:MM" (date only if no time).
+fn fmt_last_update(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return "—".to_string();
+    }
+    if raw.len() < 10 || !raw.is_ascii() {
+        return raw.to_string();
+    }
+    let date = &raw[0..10];
+    let b = date.as_bytes();
+    if b[4] == b'-' && b[7] == b'-' {
+        let (y, m, d) = (&date[0..4], &date[5..7], &date[8..10]);
+        match raw.get(11..16) {
+            Some(t) => format!("{d}.{m}.{y} {t}"),
+            None => format!("{d}.{m}.{y}"),
+        }
+    } else {
+        raw.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn gender_from_patronymic() {
-        assert_eq!(author_gender("Пелевин Виктор Олегович"), Gender::Male);
-        assert_eq!(author_gender("Иванов Иван Иванович"), Gender::Male);
-        assert_eq!(author_gender("Ахматова Анна Андреевна"), Gender::Female);
-        assert_eq!(author_gender("Толстая Татьяна Никитична"), Gender::Female);
-    }
-
-    #[test]
-    fn gender_fallback_by_given_name() {
-        assert_eq!(author_gender("Ахматова Анна"), Gender::Female);
-        assert_eq!(author_gender("Пелевин Виктор"), Gender::Male);
-        assert_eq!(author_gender("Unknown"), Gender::Male);
-    }
 
     #[test]
     fn year_extraction() {
@@ -619,8 +615,23 @@ mod tests {
 
     #[test]
     fn author_line_indent_width() {
-        assert_eq!(author_line_indent(1), "    "); // "1. " = 3 chars + 1
-        assert_eq!(author_line_indent(47), "     "); // "47. " = 4 chars + 1
-        assert_eq!(author_line_indent(100), "      "); // "100. " = 5 chars + 1
+        assert_eq!(author_line_indent(1), "      "); // "1. " = 3 + 3
+        assert_eq!(author_line_indent(47), "       "); // "47. " = 4 + 3
+        assert_eq!(author_line_indent(100), "        "); // "100. " = 5 + 3
+    }
+
+    #[test]
+    fn thousands_formatting() {
+        assert_eq!(fmt_thousands(0), "0");
+        assert_eq!(fmt_thousands(999), "999");
+        assert_eq!(fmt_thousands(587541), "587 541");
+        assert_eq!(fmt_thousands(178424), "178 424");
+    }
+
+    #[test]
+    fn last_update_formatting() {
+        assert_eq!(fmt_last_update("2026-08-18 17:15:32"), "18.08.2026 17:15");
+        assert_eq!(fmt_last_update("2026-08-18"), "18.08.2026");
+        assert_eq!(fmt_last_update(""), "—");
     }
 }
