@@ -13,8 +13,8 @@ pub enum ConvertError {
     Disabled,
     #[error("unsupported target format: {0}")]
     UnsupportedFormat(String),
-    #[error("no converter configured for {0}")]
-    NoConverter(String),
+    #[error("no converter command configured")]
+    NoConverter,
     #[error("failed to create temp dir: {0}")]
     TempDir(std::io::Error),
     #[error("failed to write input file: {0}")]
@@ -34,8 +34,8 @@ pub enum ConvertError {
 /// Convert an FB2 book (bytes) to a target format by shelling out to a
 /// configured external converter command.
 ///
-/// `input_filename` is used to derive a sanitized base name for the temp
-/// files; `target_format` must be `"epub"` or `"mobi"`.
+/// `target_format` must be present in `config.formats` and consist only of
+/// ASCII alphanumeric characters (it becomes part of the output filename).
 pub async fn convert(
     config: &ConvertConfig,
     input_bytes: &[u8],
@@ -45,14 +45,14 @@ pub async fn convert(
     if !config.enabled {
         return Err(ConvertError::Disabled);
     }
-
-    let template = match target_format {
-        "epub" => config.fb2_to_epub.as_str(),
-        "mobi" => config.fb2_to_mobi.as_str(),
-        other => return Err(ConvertError::UnsupportedFormat(other.to_string())),
-    };
-    if template.trim().is_empty() {
-        return Err(ConvertError::NoConverter(target_format.to_string()));
+    if !config.formats.iter().any(|f| f == target_format) {
+        return Err(ConvertError::UnsupportedFormat(target_format.to_string()));
+    }
+    if !target_format.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(ConvertError::UnsupportedFormat(target_format.to_string()));
+    }
+    if config.command.trim().is_empty() {
+        return Err(ConvertError::NoConverter);
     }
 
     // Unique, sanitized base name to avoid collisions between concurrent
@@ -72,7 +72,8 @@ pub async fn convert(
 
     std::fs::write(&in_path, input_bytes).map_err(ConvertError::WriteInput)?;
 
-    let command = template
+    let command = config
+        .command
         .replace("{input}", &shell_quote(&in_path))
         .replace("{output}", &shell_quote(&out_path));
 
@@ -169,6 +170,13 @@ fn shell_quote(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    fn test_config() -> ConvertConfig {
+        let mut cfg = ConvertConfig::default();
+        cfg.enabled = true;
+        cfg.temp_dir = std::env::temp_dir().join("ropds-convert-test");
+        cfg
+    }
+
     #[test]
     fn test_filename_stem_sanitizes_and_preserves_unicode() {
         assert_eq!(filename_stem("Война и мир.fb2"), "Война_и_мир");
@@ -196,8 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_convert_unsupported_format() {
-        let mut cfg = ConvertConfig::default();
-        cfg.enabled = true;
+        let cfg = test_config();
         let err = convert(&cfg, b"<FictionBook/>", "book.fb2", "docx")
             .await
             .unwrap_err();
@@ -205,13 +212,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_convert_rejects_unsafe_format() {
+        let mut cfg = test_config();
+        cfg.formats = vec!["epub".to_string(), "bad/../format".to_string()];
+        let err = convert(&cfg, b"x", "book.fb2", "bad/../format")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ConvertError::UnsupportedFormat(_)));
+    }
+
+    #[tokio::test]
+    async fn test_convert_no_converter_command() {
+        let mut cfg = test_config();
+        cfg.command = String::new();
+        let err = convert(&cfg, b"x", "book.fb2", "epub").await.unwrap_err();
+        assert!(matches!(err, ConvertError::NoConverter));
+    }
+
+    #[tokio::test]
     async fn test_convert_roundtrip_with_cp_converter() {
-        // Use `cp` as a trivial "converter": input file is simply copied to
-        // the output path, mimicking an external tool producing a file.
-        let mut cfg = ConvertConfig::default();
-        cfg.enabled = true;
-        cfg.temp_dir = std::env::temp_dir().join("ropds-convert-test");
-        cfg.fb2_to_epub = "cp \"{input}\" \"{output}\"".to_string();
+        let mut cfg = test_config();
+        cfg.command = "cp \"{input}\" \"{output}\"".to_string();
 
         let out = convert(&cfg, b"hello-fb2", "book.fb2", "epub")
             .await
@@ -221,10 +242,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_convert_no_output_when_converter_fails() {
-        let mut cfg = ConvertConfig::default();
-        cfg.enabled = true;
-        cfg.temp_dir = std::env::temp_dir().join("ropds-convert-test");
-        cfg.fb2_to_epub = "false".to_string(); // always exits non-zero
+        let mut cfg = test_config();
+        cfg.command = "false".to_string();
 
         let err = convert(&cfg, b"x", "book.fb2", "epub").await.unwrap_err();
         assert!(matches!(err, ConvertError::ConverterFailed(_)));

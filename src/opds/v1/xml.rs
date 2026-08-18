@@ -22,6 +22,7 @@ pub fn mime_for_format(format: &str) -> &'static str {
         "fb2" => "application/fb2+xml",
         "epub" => "application/epub+zip",
         "mobi" => "application/x-mobipocket-ebook",
+        "azw3" => "application/vnd.amazon.ebook",
         "pdf" => "application/pdf",
         "doc" | "docx" => "application/msword",
         "djvu" => "image/vnd.djvu",

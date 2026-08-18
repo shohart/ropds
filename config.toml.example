@@ -90,12 +90,11 @@ send_to  = ["admin@example.com"]
 starttls = true
 
 [convert]
-enabled = false                # Enable on-the-fly FB2 → EPUB/MOBI conversion
-temp_dir = "/tmp/ropds-convert"  # Temp directory for converter input/output files
-timeout_secs = 300             # Max seconds per conversion
-# Shell command templates. {input} and {output} are replaced with
-# shell-quoted absolute paths. Default: Calibre's ebook-convert (FB2-aware).
-# To reuse SOPDS-style converters, point these at your own scripts, e.g.:
-#   fb2_to_epub = "/opt/sopds/convert/fb2conv/fb2epub {input} {output}"
-fb2_to_epub = "ebook-convert \"{input}\" \"{output}\""
-fb2_to_mobi = "ebook-convert \"{input}\" \"{output}\""
+enabled = false                 # Enable on-the-fly FB2 → <formats> conversion
+temp_dir = "/tmp/ropds-convert" # Temp directory for converter input/output files
+timeout_secs = 300              # Max seconds per conversion
+# Modern converter command (Calibre ebook-convert). The target format is
+# inferred from the {output} extension; {input}/{output} are shell-quoted.
+command = "ebook-convert \"{input}\" \"{output}\""
+# Target formats offered for FB2 books. Each must be supported by `command`.
+formats = ["epub", "mobi", "azw3", "pdf", "txt"]

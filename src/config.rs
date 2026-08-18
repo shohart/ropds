@@ -336,12 +336,13 @@ impl Default for SmtpConfig {
     }
 }
 
-/// On-the-fly book conversion (FB2 → EPUB / MOBI).
+/// On-the-fly book conversion (FB2 → any configured target format).
 ///
-/// Conversion shells out to an external converter (e.g. Calibre's
-/// `ebook-convert`, or the legacy `fb2conv.py` / `fb2epub` scripts used by
-/// SOPDS). Each command template supports `{input}` and `{output}`
-/// placeholders, which are substituted with shell-quoted absolute paths.
+/// Conversion shells out to a single modern converter command (default:
+/// Calibre's `ebook-convert`), which infers the target format from the output
+/// extension. The `{input}` and `{output}` placeholders are substituted with
+/// shell-quoted absolute paths; `{output}` already carries the target
+/// extension.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ConvertConfig {
@@ -351,10 +352,11 @@ pub struct ConvertConfig {
     pub temp_dir: PathBuf,
     /// Timeout for a single conversion, in seconds.
     pub timeout_secs: u64,
-    /// Shell command template for FB2 → EPUB.
-    pub fb2_to_epub: String,
-    /// Shell command template for FB2 → MOBI.
-    pub fb2_to_mobi: String,
+    /// Converter command template with `{input}` / `{output}` placeholders.
+    pub command: String,
+    /// Target formats offered for FB2 books. Each is exposed as an acquisition
+    /// link and validated before conversion.
+    pub formats: Vec<String>,
 }
 
 impl Default for ConvertConfig {
@@ -363,8 +365,8 @@ impl Default for ConvertConfig {
             enabled: false,
             temp_dir: default_convert_temp_dir(),
             timeout_secs: default_convert_timeout_secs(),
-            fb2_to_epub: default_fb2_to_epub(),
-            fb2_to_mobi: default_fb2_to_mobi(),
+            command: default_convert_command(),
+            formats: default_convert_formats(),
         }
     }
 }
@@ -624,12 +626,15 @@ fn default_convert_timeout_secs() -> u64 {
     300
 }
 
-fn default_fb2_to_epub() -> String {
+fn default_convert_command() -> String {
     "ebook-convert \"{input}\" \"{output}\"".to_string()
 }
 
-fn default_fb2_to_mobi() -> String {
-    "ebook-convert \"{input}\" \"{output}\"".to_string()
+fn default_convert_formats() -> Vec<String> {
+    vec!["epub", "mobi", "azw3", "pdf", "txt"]
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 #[cfg(test)]

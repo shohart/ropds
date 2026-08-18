@@ -23,7 +23,7 @@ pub async fn convert(
     }
 
     let target = format.to_ascii_lowercase();
-    if !matches!(target.as_str(), "epub" | "mobi") {
+    if !state.config.convert.formats.iter().any(|f| f == &target) {
         return (StatusCode::BAD_REQUEST, "unsupported target format").into_response();
     }
 

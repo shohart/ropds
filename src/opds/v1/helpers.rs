@@ -164,24 +164,18 @@ pub async fn write_book_entry(
     // Acquisition links
     let _ = fb.write_acquisition_links(book.id, &book.format, book.cover != 0);
 
-    // On-the-fly conversion links (FB2 → EPUB/MOBI) when conversion is enabled
-    if book.format == "fb2" && state.config.convert.enabled {
-        if !state.config.convert.fb2_to_epub.trim().is_empty() {
-            let href = format!("/opds/convert/{}/epub/", book.id);
+    // On-the-fly conversion links (FB2 → configured target formats) when enabled
+    if book.format == "fb2"
+        && state.config.convert.enabled
+        && !state.config.convert.command.trim().is_empty()
+    {
+        for fmt in &state.config.convert.formats {
+            let href = format!("/opds/convert/{}/{}/", book.id, fmt);
             let _ = fb.write_link(
                 &href,
                 xml::REL_ACQUISITION,
-                xml::mime_for_format("epub"),
-                Some("EPUB"),
-            );
-        }
-        if !state.config.convert.fb2_to_mobi.trim().is_empty() {
-            let href = format!("/opds/convert/{}/mobi/", book.id);
-            let _ = fb.write_link(
-                &href,
-                xml::REL_ACQUISITION,
-                xml::mime_for_format("mobi"),
-                Some("MOBI"),
+                xml::mime_for_format(fmt),
+                Some(fmt),
             );
         }
     }

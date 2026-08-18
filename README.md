@@ -292,32 +292,32 @@ Nginx and Traefik snippets:
 
 Books inside **ZIP archives** are scanned transparently. **INPX** index files are supported as an alternative to scanning individual archives.
 
-## On-the-fly conversion (FB2 → EPUB / MOBI)
+## On-the-fly conversion (FB2 → EPUB / MOBI / AZW3 / PDF / TXT / …)
 
-FB2 books can be converted to EPUB or MOBI on demand, mirroring the classic
-SOPDS behaviour. Conversion is **disabled by default** and controlled entirely
-by the `[convert]` config section:
+FB2 books can be converted to other formats on demand, powered by a modern
+converter engine (Calibre's `ebook-convert` by default). Conversion is
+**disabled by default** and controlled entirely by the `[convert]` config
+section:
 
 ```toml
 [convert]
 enabled = true
 temp_dir = "/tmp/ropds-convert"
 timeout_secs = 300
-fb2_to_epub = "ebook-convert \"{input}\" \"{output}\""
-fb2_to_mobi = "ebook-convert \"{input}\" \"{output}\""
+command = "ebook-convert \"{input}\" \"{output}\""
+formats = ["epub", "mobi", "azw3", "pdf", "txt"]
 ```
 
-Each command template supports `{input}` and `{output}` placeholders, replaced
-with shell-quoted absolute paths. The default uses Calibre's `ebook-convert`,
-but any converter script works — e.g. the legacy SOPDS `fb2conv.py` / `fb2epub`
-helpers.
+`command` is a shell template: `{input}` and `{output}` are replaced with
+shell-quoted absolute paths, and `{output}` already carries the target
+extension — `ebook-convert` infers the conversion from that extension. `formats`
+lists the target formats offered for FB2 books; each is validated and exposed
+as an acquisition link:
 
-When enabled, FB2 entries expose two extra acquisition links:
+`GET /opds/convert/{book_id}/{format}/` (e.g. `/opds/convert/42/azw3/`)
 
-- `GET /opds/convert/{book_id}/epub/`
-- `GET /opds/convert/{book_id}/mobi/`
-
-Set either command to an empty string to hide that format.
+Any converter that honours `{input}`/`{output}` works as a drop-in replacement
+for `ebook-convert` (e.g. a lighter FB2-specific tool if you only need EPUB).
 
 ## Database
 
