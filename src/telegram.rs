@@ -90,7 +90,7 @@ async fn handle_message(
         return Ok(());
     }
 
-    let page_size = config.telegram.max_results.max(1) as i64;
+    let page_size = config.telegram.max_results.max(1) as usize;
     let total = books::count_title_or_author(&pool, text).await.unwrap_or(0);
     if total == 0 {
         bot.send_message(
@@ -102,10 +102,15 @@ async fn handle_message(
     }
 
     let page = 0usize;
-    let total_pages = page_count(total, page_size);
-    let found = books::search_title_or_author(&pool, text, page_size, page as i64 * page_size)
-        .await
-        .unwrap_or_default();
+    let total_pages = page_count(total, page_size as i64);
+    let found = books::search_title_or_author(
+        &pool,
+        text,
+        page_size as i64,
+        page as i64 * page_size as i64,
+    )
+    .await
+    .unwrap_or_default();
 
     if let Ok(mut cache) = search_cache.lock() {
         cache.insert(
@@ -118,7 +123,7 @@ async fn handle_message(
     }
 
     let (body, markup) =
-        build_search_message(&pool, text, page, total, total_pages, &found).await?;
+        build_search_message(&pool, text, page, page_size, total, total_pages, &found).await?;
     bot.send_message(msg.chat.id, body)
         .parse_mode(ParseMode::Html)
         .reply_markup(markup)
@@ -203,12 +208,18 @@ async fn build_search_message(
     pool: &DbPool,
     query: &str,
     page: usize,
+    page_size: usize,
     total: i64,
     total_pages: usize,
     book_list: &[crate::db::models::Book],
 ) -> ResponseResult<(String, InlineKeyboardMarkup)> {
-    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    for book in book_list {
+    let start_index = page * page_size;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut number_buttons: Vec<InlineKeyboardButton> = Vec::new();
+
+    for (i, book) in book_list.iter().enumerate() {
+        let number = start_index + i + 1;
         let author = authors::get_for_book(pool, book.id)
             .await
             .unwrap_or_default()
@@ -216,12 +227,37 @@ async fn build_search_message(
             .map(|a| a.full_name)
             .collect::<Vec<_>>()
             .join(", ");
-        let label = candidate_label(&book.title, &author);
-        rows.push(vec![InlineKeyboardButton::callback(
-            label,
+        let year = book.docdate.trim().to_string();
+        let mut second = String::new();
+        if !author.is_empty() {
+            second.push_str(&author);
+        }
+        if !year.is_empty() {
+            if !second.is_empty() {
+                second.push_str(", ");
+            }
+            second.push_str(&year);
+        }
+        if second.is_empty() {
+            second.push('—');
+        }
+
+        lines.push(format!(
+            "{}. 📖 <b>{}</b>\n👤 {}",
+            number,
+            escape_html(&book.title),
+            escape_html(&second),
+        ));
+        number_buttons.push(InlineKeyboardButton::callback(
+            number.to_string(),
             format!("card:{}", book.id),
-        )]);
+        ));
     }
+
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = number_buttons
+        .chunks(5)
+        .map(|chunk| chunk.to_vec())
+        .collect();
 
     if total_pages > 1 {
         let mut nav = Vec::new();
@@ -237,11 +273,12 @@ async fn build_search_message(
     }
 
     let body = format!(
-        "🔎 <b>Результаты по запросу «{}»</b>\n📚 Найдено: {} · Страница {} из {}",
+        "🔎 <b>Результаты по запросу «{}»</b>\n📚 Найдено: {} · Страница {} из {}\n\n{}",
         escape_html(query),
         total,
         page + 1,
         total_pages.max(1),
+        lines.join("\n\n"),
     );
 
     Ok((body, InlineKeyboardMarkup::new(rows)))
@@ -280,7 +317,7 @@ async fn handle_callback(
     // Pagination.
     if data == "pg:prev" || data == "pg:next" {
         bot.answer_callback_query(query.id).await?;
-        let page_size = config.telegram.max_results.max(1) as i64;
+        let page_size = config.telegram.max_results.max(1) as usize;
 
         // Read and update state under a short lock; never hold it across await.
         let query_text = {
@@ -309,7 +346,7 @@ async fn handle_callback(
         let total = books::count_title_or_author(&pool, &query_text)
             .await
             .unwrap_or(0);
-        let total_pages = page_count(total, page_size).max(1);
+        let total_pages = page_count(total, page_size as i64).max(1);
         let page = {
             let mut cache = search_cache.lock().unwrap();
             let page = match cache.get_mut(&chat_id) {
@@ -322,13 +359,25 @@ async fn handle_callback(
             page
         };
 
-        let found =
-            books::search_title_or_author(&pool, &query_text, page_size, page as i64 * page_size)
-                .await
-                .unwrap_or_default();
+        let found = books::search_title_or_author(
+            &pool,
+            &query_text,
+            page_size as i64,
+            page as i64 * page_size as i64,
+        )
+        .await
+        .unwrap_or_default();
 
-        let (body, markup) =
-            build_search_message(&pool, &query_text, page, total, total_pages, &found).await?;
+        let (body, markup) = build_search_message(
+            &pool,
+            &query_text,
+            page,
+            page_size,
+            total,
+            total_pages,
+            &found,
+        )
+        .await?;
 
         bot.edit_message_text(chat_id, message.id(), body)
             .parse_mode(ParseMode::Html)
@@ -403,25 +452,6 @@ fn page_count(total: i64, page_size: i64) -> usize {
         0
     } else {
         ((total + page_size - 1) / page_size) as usize
-    }
-}
-
-fn candidate_label(title: &str, author: &str) -> String {
-    let base = if author.is_empty() {
-        format!("📖 {title}")
-    } else {
-        format!("📖 {title} — {author}")
-    };
-    truncate_chars(&base, 48)
-}
-
-fn truncate_chars(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        value.to_string()
-    } else {
-        let mut out: String = value.chars().take(max).collect();
-        out.push('…');
-        out
     }
 }
 
