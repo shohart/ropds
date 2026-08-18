@@ -167,7 +167,7 @@ pub async fn write_book_entry(
     // On-the-fly conversion links (FB2 → configured target formats) when enabled
     if book.format == "fb2"
         && state.config.convert.enabled
-        && !state.config.convert.command.trim().is_empty()
+        && state.config.convert.has_any_command()
     {
         for fmt in &state.config.convert.formats {
             let href = format!("/opds/convert/{}/{}/", book.id, fmt);

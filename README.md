@@ -294,30 +294,38 @@ Books inside **ZIP archives** are scanned transparently. **INPX** index files ar
 
 ## On-the-fly conversion (FB2 → EPUB / MOBI / AZW3 / PDF / TXT / …)
 
-FB2 books can be converted to other formats on demand, powered by a modern
-converter engine (Calibre's `ebook-convert` by default). Conversion is
-**disabled by default** and controlled entirely by the `[convert]` config
-section:
+FB2 books can be converted to other formats on demand. The default engine is
+**fb2cng** (`fbc`) — a modern, single-purpose FB2 converter that produces
+clean, `epubcheck`-compliant output. Calibre's `ebook-convert` remains available
+as a configurable fallback (e.g. for MOBI, which fb2cng does not produce).
+Conversion is **disabled by default** and controlled by the `[convert]` section:
 
 ```toml
 [convert]
 enabled = true
 temp_dir = "/tmp/ropds-convert"
 timeout_secs = 300
-command = "ebook-convert \"{input}\" \"{output}\""
+
+# Fallback converter for formats without a specific entry below.
+default_command = "ebook-convert \"{input}\" \"{output}\""
+
 formats = ["epub", "mobi", "azw3", "pdf", "txt"]
+
+# Per-format commands (fb2cng). Override any format to switch engines.
+[convert.commands]
+epub = "fbc convert --to epub3 --output-file \"{output}\" \"{input}\""
+azw3 = "fbc convert --to azw8 --output-file \"{output}\" \"{input}\""
+pdf  = "fbc convert --to pdf --output-file \"{output}\" \"{input}\""
+txt  = "fbc convert --to txt --output-file \"{output}\" \"{input}\""
 ```
 
-`command` is a shell template: `{input}` and `{output}` are replaced with
-shell-quoted absolute paths, and `{output}` already carries the target
-extension — `ebook-convert` infers the conversion from that extension. `formats`
-lists the target formats offered for FB2 books; each is validated and exposed
+A format resolves to its `[convert.commands]` entry, falling back to
+`default_command` when absent. `{input}` and `{output}` are shell-quoted
+absolute paths; `{output}` already carries the target extension. `formats`
+lists the target formats offered for FB2 books — each is validated and exposed
 as an acquisition link:
 
 `GET /opds/convert/{book_id}/{format}/` (e.g. `/opds/convert/42/azw3/`)
-
-Any converter that honours `{input}`/`{output}` works as a drop-in replacement
-for `ebook-convert` (e.g. a lighter FB2-specific tool if you only need EPUB).
 
 ## Database
 

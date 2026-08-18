@@ -93,8 +93,19 @@ starttls = true
 enabled = false                 # Enable on-the-fly FB2 → <formats> conversion
 temp_dir = "/tmp/ropds-convert" # Temp directory for converter input/output files
 timeout_secs = 300              # Max seconds per conversion
-# Modern converter command (Calibre ebook-convert). The target format is
-# inferred from the {output} extension; {input}/{output} are shell-quoted.
-command = "ebook-convert \"{input}\" \"{output}\""
-# Target formats offered for FB2 books. Each must be supported by `command`.
+
+# Fallback converter (Calibre ebook-convert) for formats without a specific
+# entry in [convert.commands] (e.g. MOBI, which fb2cng does not produce).
+default_command = "ebook-convert \"{input}\" \"{output}\""
+
+# Target formats offered for FB2 books.
 formats = ["epub", "mobi", "azw3", "pdf", "txt"]
+
+# Per-format converter commands. fb2cng (fbc) is the default engine — clean,
+# epubcheck-compliant output. {input}/{output} are shell-quoted; {output}
+# already carries the target extension.
+[convert.commands]
+epub = "fbc convert --to epub3 --output-file \"{output}\" \"{input}\""
+azw3 = "fbc convert --to azw8 --output-file \"{output}\" \"{input}\""
+pdf  = "fbc convert --to pdf --output-file \"{output}\" \"{input}\""
+txt  = "fbc convert --to txt --output-file \"{output}\" \"{input}\""

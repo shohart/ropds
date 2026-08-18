@@ -194,7 +194,7 @@ pub async fn book_publication(state: &AppState, book: &Book, lang: &str) -> Valu
 
     if book.format == "fb2"
         && state.config.convert.enabled
-        && !state.config.convert.command.trim().is_empty()
+        && state.config.convert.has_any_command()
     {
         for fmt in &state.config.convert.formats {
             links.push(json!({

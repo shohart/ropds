@@ -13,8 +13,8 @@ pub enum ConvertError {
     Disabled,
     #[error("unsupported target format: {0}")]
     UnsupportedFormat(String),
-    #[error("no converter command configured")]
-    NoConverter,
+    #[error("no converter command configured for {0}")]
+    NoConverter(String),
     #[error("failed to create temp dir: {0}")]
     TempDir(std::io::Error),
     #[error("failed to write input file: {0}")]
@@ -32,7 +32,8 @@ pub enum ConvertError {
 }
 
 /// Convert an FB2 book (bytes) to a target format by shelling out to a
-/// configured external converter command.
+/// configured external converter command (fb2cng by default, Calibre as the
+/// fallback).
 ///
 /// `target_format` must be present in `config.formats` and consist only of
 /// ASCII alphanumeric characters (it becomes part of the output filename).
@@ -51,9 +52,9 @@ pub async fn convert(
     if !target_format.chars().all(|c| c.is_ascii_alphanumeric()) {
         return Err(ConvertError::UnsupportedFormat(target_format.to_string()));
     }
-    if config.command.trim().is_empty() {
-        return Err(ConvertError::NoConverter);
-    }
+    let template = config
+        .command_for(target_format)
+        .ok_or_else(|| ConvertError::NoConverter(target_format.to_string()))?;
 
     // Unique, sanitized base name to avoid collisions between concurrent
     // conversions and across processes sharing the same temp dir.
@@ -72,8 +73,7 @@ pub async fn convert(
 
     std::fs::write(&in_path, input_bytes).map_err(ConvertError::WriteInput)?;
 
-    let command = config
-        .command
+    let command = template
         .replace("{input}", &shell_quote(&in_path))
         .replace("{output}", &shell_quote(&out_path));
 
@@ -174,7 +174,36 @@ mod tests {
         let mut cfg = ConvertConfig::default();
         cfg.enabled = true;
         cfg.temp_dir = std::env::temp_dir().join("ropds-convert-test");
+        // Use `cp` as a trivial converter for tests.
+        cfg.commands.clear();
+        cfg.default_command = "cp \"{input}\" \"{output}\"".to_string();
         cfg
+    }
+
+    #[test]
+    fn test_command_for_prefers_override_then_fallback() {
+        let cfg = ConvertConfig::default();
+        // Defaults: fb2cng for epub/azw3/pdf/txt, Calibre fallback for the rest.
+        assert!(cfg.command_for("epub").unwrap().contains("fbc convert"));
+        assert!(cfg.command_for("azw3").unwrap().contains("--to azw8"));
+        assert!(cfg.command_for("mobi").unwrap().contains("ebook-convert"));
+
+        // Empty fallback + no override → None.
+        let mut cfg = ConvertConfig::default();
+        cfg.default_command.clear();
+        cfg.commands.clear();
+        assert!(cfg.command_for("epub").is_none());
+    }
+
+    #[test]
+    fn test_has_any_command() {
+        let cfg = ConvertConfig::default();
+        assert!(cfg.has_any_command());
+
+        let mut cfg = ConvertConfig::default();
+        cfg.default_command.clear();
+        cfg.commands.clear();
+        assert!(!cfg.has_any_command());
     }
 
     #[test]
@@ -224,16 +253,15 @@ mod tests {
     #[tokio::test]
     async fn test_convert_no_converter_command() {
         let mut cfg = test_config();
-        cfg.command = String::new();
+        cfg.commands.clear();
+        cfg.default_command.clear();
         let err = convert(&cfg, b"x", "book.fb2", "epub").await.unwrap_err();
-        assert!(matches!(err, ConvertError::NoConverter));
+        assert!(matches!(err, ConvertError::NoConverter(_)));
     }
 
     #[tokio::test]
     async fn test_convert_roundtrip_with_cp_converter() {
-        let mut cfg = test_config();
-        cfg.command = "cp \"{input}\" \"{output}\"".to_string();
-
+        let cfg = test_config();
         let out = convert(&cfg, b"hello-fb2", "book.fb2", "epub")
             .await
             .unwrap();
@@ -243,8 +271,7 @@ mod tests {
     #[tokio::test]
     async fn test_convert_no_output_when_converter_fails() {
         let mut cfg = test_config();
-        cfg.command = "false".to_string();
-
+        cfg.default_command = "false".to_string();
         let err = convert(&cfg, b"x", "book.fb2", "epub").await.unwrap_err();
         assert!(matches!(err, ConvertError::ConverterFailed(_)));
     }

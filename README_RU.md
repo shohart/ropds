@@ -294,30 +294,37 @@ sudo journalctl -u ropds.service -f
 
 ## Конвертация на лету (FB2 → EPUB / MOBI / AZW3 / PDF / TXT / …)
 
-FB2-книги можно конвертировать в другие форматы по запросу — на современном
-движке (по умолчанию Calibre `ebook-convert`). Конвертация **по умолчанию
-выключена** и настраивается секцией `[convert]`:
+FB2-книги можно конвертировать в другие форматы по запросу. Движок по
+умолчанию — **fb2cng** (`fbc`): современный специализированный FB2-конвертер,
+дающий чистый вывод, проходящий `epubcheck`. Calibre `ebook-convert` остаётся
+настраиваемым фолбэком (например, для MOBI, которого fb2cng не делает).
+Конвертация **по умолчанию выключена** и настраивается секцией `[convert]`:
 
 ```toml
 [convert]
 enabled = true
 temp_dir = "/tmp/ropds-convert"
 timeout_secs = 300
-command = "ebook-convert \"{input}\" \"{output}\""
+
+# Фолбэк-конвертер для форматов без отдельной команды ниже.
+default_command = "ebook-convert \"{input}\" \"{output}\""
+
 formats = ["epub", "mobi", "azw3", "pdf", "txt"]
+
+# Команды по форматам (fb2cng). Переопределите любой формат, чтобы сменить движок.
+[convert.commands]
+epub = "fbc convert --to epub3 --output-file \"{output}\" \"{input}\""
+azw3 = "fbc convert --to azw8 --output-file \"{output}\" \"{input}\""
+pdf  = "fbc convert --to pdf --output-file \"{output}\" \"{input}\""
+txt  = "fbc convert --to txt --output-file \"{output}\" \"{input}\""
 ```
 
-`command` — это шаблон команды: `{input}` и `{output}` заменяются на
-экранированные абсолютные пути, причём `{output}` уже несёт целевое
-расширение — по нему `ebook-convert` и определяет формат. `formats` — список
-целевых форматов, которые предлагаются для FB2-книг; каждый проверяется и
-отдаётся как ссылка на скачивание:
+Формат резолвится в свою команду из `[convert.commands]`, при отсутствии —
+в `default_command`. `{input}` и `{output}` — экранированные абсолютные пути,
+`{output}` уже несёт целевое расширение. `formats` — список целевых форматов,
+каждый проверяется и отдаётся как ссылка на скачивание:
 
 `GET /opds/convert/{book_id}/{format}/` (например `/opds/convert/42/azw3/`)
-
-Любой конвертер, понимающий `{input}`/`{output}`, может заменить
-`ebook-convert` (например, более лёгкий FB2-специфичный инструмент, если нужен
-только EPUB).
 
 ## База данных
 

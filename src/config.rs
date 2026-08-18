@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -338,11 +339,12 @@ impl Default for SmtpConfig {
 
 /// On-the-fly book conversion (FB2 → any configured target format).
 ///
-/// Conversion shells out to a single modern converter command (default:
-/// Calibre's `ebook-convert`), which infers the target format from the output
-/// extension. The `{input}` and `{output}` placeholders are substituted with
-/// shell-quoted absolute paths; `{output}` already carries the target
-/// extension.
+/// fb2cng (`fbc`) is the default engine — it produces clean, epubcheck-
+/// compliant output. Calibre's `ebook-convert` remains available as a
+/// configurable fallback for formats fb2cng does not produce (e.g. MOBI).
+/// Each command template supports `{input}` and `{output}` placeholders,
+/// substituted with shell-quoted absolute paths; `{output}` already carries
+/// the target extension.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ConvertConfig {
@@ -352,11 +354,36 @@ pub struct ConvertConfig {
     pub temp_dir: PathBuf,
     /// Timeout for a single conversion, in seconds.
     pub timeout_secs: u64,
-    /// Converter command template with `{input}` / `{output}` placeholders.
-    pub command: String,
+    /// Fallback converter command (Calibre `ebook-convert`) used for formats
+    /// without a specific entry in `commands`.
+    pub default_command: String,
+    /// Per-format converter command templates (fb2cng by default). Key =
+    /// target format, value = shell command with `{input}` / `{output}`.
+    pub commands: BTreeMap<String, String>,
     /// Target formats offered for FB2 books. Each is exposed as an acquisition
     /// link and validated before conversion.
     pub formats: Vec<String>,
+}
+
+impl ConvertConfig {
+    /// Resolve the converter command for a target format: per-format override
+    /// first, then the fallback default command.
+    pub fn command_for(&self, format: &str) -> Option<&str> {
+        if let Some(cmd) = self.commands.get(format) {
+            return Some(cmd.as_str());
+        }
+        let fallback = self.default_command.trim();
+        if fallback.is_empty() {
+            None
+        } else {
+            Some(fallback)
+        }
+    }
+
+    /// True if at least one converter command is configured.
+    pub fn has_any_command(&self) -> bool {
+        !self.commands.is_empty() || !self.default_command.trim().is_empty()
+    }
 }
 
 impl Default for ConvertConfig {
@@ -365,7 +392,8 @@ impl Default for ConvertConfig {
             enabled: false,
             temp_dir: default_convert_temp_dir(),
             timeout_secs: default_convert_timeout_secs(),
-            command: default_convert_command(),
+            default_command: default_convert_command(),
+            commands: default_convert_commands(),
             formats: default_convert_formats(),
         }
     }
@@ -628,6 +656,27 @@ fn default_convert_timeout_secs() -> u64 {
 
 fn default_convert_command() -> String {
     "ebook-convert \"{input}\" \"{output}\"".to_string()
+}
+
+fn default_convert_commands() -> BTreeMap<String, String> {
+    let mut commands = BTreeMap::new();
+    commands.insert(
+        "epub".to_string(),
+        "fbc convert --to epub3 --output-file \"{output}\" \"{input}\"".to_string(),
+    );
+    commands.insert(
+        "azw3".to_string(),
+        "fbc convert --to azw8 --output-file \"{output}\" \"{input}\"".to_string(),
+    );
+    commands.insert(
+        "pdf".to_string(),
+        "fbc convert --to pdf --output-file \"{output}\" \"{input}\"".to_string(),
+    );
+    commands.insert(
+        "txt".to_string(),
+        "fbc convert --to txt --output-file \"{output}\" \"{input}\"".to_string(),
+    );
+    commands
 }
 
 fn default_convert_formats() -> Vec<String> {
